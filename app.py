@@ -214,20 +214,167 @@ if rol == "admin":
         st.metric("RELAVES", "0%")
 
 
-# =====================================================
-# USUARIOS POR ÁREA
-# =====================================================
-
 else:
 
-    st.subheader(f"Área: {nombre_area}")
+    # =====================================================
+    # MENÚ DEL USUARIO POR ÁREA
+    # =====================================================
 
-    st.success(
-        f"Acceso autorizado únicamente para {nombre_area}."
+    with st.sidebar:
+
+        st.divider()
+
+        pagina = st.radio(
+            "Menú",
+            [
+                "Dashboard",
+                "Registrar avance",
+                "Detalle por OT",
+                "Evidencias",
+                "Informe diario",
+                "Reportes"
+            ]
+        )
+
+
+    # =====================================================
+    # OBTENER OTs DEL ÁREA DEL USUARIO
+    # =====================================================
+
+    resultado_ots = (
+        supabase
+        .table("ots")
+        .select("id,ot,equipo,descripcion,activo,area_id")
+        .eq("area_id", usuario["area_id"])
+        .eq("activo", True)
+        .execute()
     )
 
-    st.write(
-        "Las OTs, actividades y avances que se mostrarán "
-        "en este acceso estarán filtrados automáticamente "
-        "por esta área."
-    )
+    ots_area = resultado_ots.data or []
+
+
+    # =====================================================
+    # DASHBOARD
+    # =====================================================
+
+    if pagina == "Dashboard":
+
+        st.subheader(f"Dashboard - {nombre_area}")
+
+        st.success(
+            f"Visualización exclusiva del área {nombre_area}."
+        )
+
+        total_ots = len(ots_area)
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            st.metric("OTs registradas", total_ots)
+
+        with col2:
+            st.metric("Actividades", "0")
+
+        with col3:
+            st.metric("Avance general", "0%")
+
+        with col4:
+            st.metric("Pendientes", "0")
+
+        st.divider()
+
+        st.info(
+            "El dashboard todavía no tiene actividades cargadas. "
+            "En el siguiente paso conectaremos las actividades y los avances."
+        )
+
+
+    # =====================================================
+    # REGISTRAR AVANCE
+    # =====================================================
+
+    elif pagina == "Registrar avance":
+
+        st.subheader(f"Registrar avance - {nombre_area}")
+
+        if not ots_area:
+            st.warning(
+                "Todavía no existen OTs cargadas para esta área."
+            )
+        else:
+            lista_ots = [
+                f"{ot['ot']} - {ot.get('equipo') or 'Sin equipo'}"
+                for ot in ots_area
+            ]
+
+            st.selectbox(
+                "Seleccione una OT",
+                lista_ots
+            )
+
+            st.info(
+                "En el siguiente paso conectaremos las actividades "
+                "de la OT seleccionada."
+            )
+
+
+    # =====================================================
+    # DETALLE POR OT
+    # =====================================================
+
+    elif pagina == "Detalle por OT":
+
+        st.subheader(f"Detalle por OT - {nombre_area}")
+
+        if not ots_area:
+            st.warning(
+                "Todavía no existen OTs cargadas para esta área."
+            )
+        else:
+            st.dataframe(
+                ots_area,
+                use_container_width=True,
+                hide_index=True
+            )
+
+
+    # =====================================================
+    # EVIDENCIAS
+    # =====================================================
+
+    elif pagina == "Evidencias":
+
+        st.subheader(f"Evidencias - {nombre_area}")
+
+        st.info(
+            "Aquí se mostrarán únicamente las evidencias "
+            "correspondientes a esta área."
+        )
+
+
+    # =====================================================
+    # INFORME DIARIO
+    # =====================================================
+
+    elif pagina == "Informe diario":
+
+        st.subheader(f"Informe diario - {nombre_area}")
+
+        st.info(
+            "Aquí construiremos el resumen diario automático "
+            "del área."
+        )
+
+
+    # =====================================================
+    # REPORTES
+    # =====================================================
+
+    elif pagina == "Reportes":
+
+        st.subheader(f"Reportes - {nombre_area}")
+
+        st.info(
+            "Aquí construiremos los reportes de cumplimiento, "
+            "avance y pendientes."
+        )
