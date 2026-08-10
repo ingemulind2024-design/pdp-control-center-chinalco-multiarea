@@ -19,7 +19,14 @@ from reportlab.platypus import (
     Paragraph,
     Spacer,
     Table,
-    TableStyle
+    TableStyle,
+    PageBreak
+)
+from reportlab.graphics.shapes import (
+    Drawing,
+    Line,
+    String,
+    PolyLine
 )
 
 from supabase import create_client
@@ -1412,6 +1419,427 @@ def construir_secciones_informe_diario(
 
 
 
+
+# =====================================================
+# COMPONENTES GERENCIALES PARA PDF
+# =====================================================
+
+def calcular_semaforo_pdf(
+    actividades: pd.DataFrame,
+    avances: pd.DataFrame
+) -> pd.DataFrame:
+
+    estado = build_activity_status(
+        actividades,
+        avances
+    )
+
+    if estado.empty:
+        return estado
+
+    ahora = pd.Timestamp.now()
+
+    inicio = pd.to_datetime(
+        estado.get("inicio_plan"),
+        errors="coerce"
+    )
+
+    fin = pd.to_datetime(
+        estado.get("fin_plan"),
+        errors="coerce"
+    )
+
+    real = pd.to_numeric(
+        estado.get("avance_real", 0),
+        errors="coerce"
+    ).fillna(0)
+
+    planes = []
+
+    for ini, fn in zip(inicio, fin):
+
+        if pd.isna(ini) or pd.isna(fn):
+            planes.append(0.0)
+            continue
+
+        if fn <= ini:
+            fn = ini + pd.Timedelta(minutes=1)
+
+        if ahora <= ini:
+            plan = 0.0
+        elif ahora >= fn:
+            plan = 100.0
+        else:
+            total = (fn - ini).total_seconds()
+            transcurrido = (ahora - ini).total_seconds()
+            plan = (
+                transcurrido / total * 100
+                if total > 0
+                else 100.0
+            )
+
+        planes.append(
+            max(0.0, min(100.0, float(plan)))
+        )
+
+    estado["PLAN ACTUAL (%)"] = planes
+    estado["DESVIACIÓN (pp)"] = (
+        real - estado["PLAN ACTUAL (%)"]
+    ).round(1)
+
+    if "critica" not in estado.columns:
+        estado["critica"] = False
+
+    estado["critica"] = (
+        estado["critica"].fillna(False)
+    )
+
+    def clasificar(fila):
+
+        real_f = float(
+            fila.get("avance_real", 0) or 0
+        )
+        plan_f = float(
+            fila.get("PLAN ACTUAL (%)", 0) or 0
+        )
+        critica = bool(
+            fila.get("critica", False)
+        )
+        fin_f = fila.get("fin_plan")
+        desviacion = real_f - plan_f
+
+        if real_f >= 100:
+            return (
+                "VERDE",
+                "Culminada",
+                "Sin acción requerida",
+                90
+            )
+
+        if (
+            pd.notna(fin_f)
+            and ahora > pd.Timestamp(fin_f)
+            and real_f < 100
+        ):
+            return (
+                "ROJO",
+                "Crítica vencida"
+                if critica else "Vencida",
+                "Escalar y definir recuperación inmediata",
+                1 if critica else 2
+            )
+
+        if critica:
+            if desviacion < -10:
+                return (
+                    "ROJO",
+                    "Crítica atrasada",
+                    "Escalar y definir recuperación inmediata",
+                    3
+                )
+            if desviacion < -5:
+                return (
+                    "NARANJA",
+                    "Crítica en riesgo",
+                    "Aplicar plan de recuperación",
+                    5
+                )
+            return (
+                "VERDE",
+                "Crítica en línea",
+                "Mantener seguimiento cercano",
+                30
+            )
+
+        if desviacion < -20:
+            return (
+                "ROJO",
+                "Atraso crítico",
+                "Intervención inmediata / reprogramar recursos",
+                4
+            )
+        if desviacion < -10:
+            return (
+                "NARANJA",
+                "Atrasada",
+                "Definir plan de recuperación",
+                6
+            )
+        if desviacion < -5:
+            return (
+                "AMARILLO",
+                "En riesgo",
+                "Seguimiento del supervisor",
+                10
+            )
+
+        return (
+            "VERDE",
+            "En línea",
+            "Sin acción requerida",
+            40
+        )
+
+    resultado = estado.apply(
+        clasificar,
+        axis=1
+    )
+
+    estado["NIVEL"] = resultado.map(
+        lambda x: x[0]
+    )
+    estado["ALERTA"] = resultado.map(
+        lambda x: x[1]
+    )
+    estado["ACCIÓN REQUERIDA"] = resultado.map(
+        lambda x: x[2]
+    )
+    estado["_PRIORIDAD"] = resultado.map(
+        lambda x: x[3]
+    )
+
+    return estado
+
+
+def construir_curva_s_pdf(
+    actividades: pd.DataFrame,
+    avances: pd.DataFrame
+):
+
+    curva = build_s_curve(
+        actividades,
+        avances
+    )
+
+    if curva.empty:
+        return None
+
+    curva = curva.copy()
+
+    if "fecha" not in curva.columns:
+        return None
+
+    curva["fecha"] = pd.to_datetime(
+        curva["fecha"],
+        errors="coerce"
+    )
+
+    curva = curva.dropna(
+        subset=["fecha"]
+    )
+
+    if curva.empty:
+        return None
+
+    # Reducir puntos si la curva es muy extensa.
+    if len(curva) > 24:
+        indices = np.linspace(
+            0,
+            len(curva) - 1,
+            24
+        ).astype(int)
+        curva = curva.iloc[
+            sorted(set(indices))
+        ].copy()
+
+    width = 500
+    height = 220
+
+    left = 48
+    right = 18
+    bottom = 38
+    top = 22
+
+    plot_w = width - left - right
+    plot_h = height - bottom - top
+
+    drawing = Drawing(
+        width,
+        height
+    )
+
+    # Ejes y grilla discreta.
+    for valor in [0, 25, 50, 75, 100]:
+
+        y = bottom + (
+            valor / 100.0
+        ) * plot_h
+
+        drawing.add(
+            Line(
+                left,
+                y,
+                width - right,
+                y,
+                strokeColor=colors.HexColor("#E4E7EC"),
+                strokeWidth=0.6
+            )
+        )
+
+        drawing.add(
+            String(
+                12,
+                y - 3,
+                f"{valor}%",
+                fontName="Helvetica",
+                fontSize=7,
+                fillColor=colors.HexColor("#667085")
+            )
+        )
+
+    drawing.add(
+        Line(
+            left,
+            bottom,
+            left,
+            height - top,
+            strokeColor=colors.HexColor("#98A2B3"),
+            strokeWidth=0.8
+        )
+    )
+
+    drawing.add(
+        Line(
+            left,
+            bottom,
+            width - right,
+            bottom,
+            strokeColor=colors.HexColor("#98A2B3"),
+            strokeWidth=0.8
+        )
+    )
+
+    n = len(curva)
+
+    def puntos(columna):
+
+        valores = pd.to_numeric(
+            curva[columna],
+            errors="coerce"
+        ).fillna(0).clip(
+            lower=0,
+            upper=100
+        )
+
+        resultado = []
+
+        for i, valor in enumerate(valores):
+
+            x = (
+                left
+                if n <= 1
+                else left + (
+                    i / (n - 1)
+                ) * plot_w
+            )
+
+            y = bottom + (
+                float(valor) / 100.0
+            ) * plot_h
+
+            resultado.extend(
+                [x, y]
+            )
+
+        return resultado
+
+    if "PLAN" in curva.columns:
+        drawing.add(
+            PolyLine(
+                puntos("PLAN"),
+                strokeColor=colors.HexColor("#082D55"),
+                strokeWidth=2
+            )
+        )
+
+    if "REAL" in curva.columns:
+        drawing.add(
+            PolyLine(
+                puntos("REAL"),
+                strokeColor=colors.HexColor("#D92D20"),
+                strokeWidth=2
+            )
+        )
+
+    # Etiquetas de fechas: inicio, medio y fin.
+    posiciones = sorted(
+        set(
+            [
+                0,
+                max(0, n // 2),
+                max(0, n - 1)
+            ]
+        )
+    )
+
+    for idx in posiciones:
+
+        fecha = curva.iloc[idx]["fecha"]
+
+        x = (
+            left
+            if n <= 1
+            else left + (
+                idx / (n - 1)
+            ) * plot_w
+        )
+
+        drawing.add(
+            String(
+                x - 20,
+                16,
+                fecha.strftime("%d/%m %H:%M"),
+                fontName="Helvetica",
+                fontSize=6.5,
+                fillColor=colors.HexColor("#667085")
+            )
+        )
+
+    drawing.add(
+        Line(
+            340,
+            205,
+            360,
+            205,
+            strokeColor=colors.HexColor("#082D55"),
+            strokeWidth=2
+        )
+    )
+    drawing.add(
+        String(
+            365,
+            201,
+            "PLAN",
+            fontName="Helvetica-Bold",
+            fontSize=7,
+            fillColor=colors.HexColor("#344054")
+        )
+    )
+
+    drawing.add(
+        Line(
+            415,
+            205,
+            435,
+            205,
+            strokeColor=colors.HexColor("#D92D20"),
+            strokeWidth=2
+        )
+    )
+    drawing.add(
+        String(
+            440,
+            201,
+            "REAL",
+            fontName="Helvetica-Bold",
+            fontSize=7,
+            fillColor=colors.HexColor("#344054")
+        )
+    )
+
+    return drawing
+
+
 # =====================================================
 # REPORTE PDF EJECUTIVO POR ÁREA
 # =====================================================
@@ -1616,7 +2044,336 @@ def construir_pdf_ejecutivo_area(
     )
 
     story.append(tabla_resumen)
-    story.append(Spacer(1, 16))
+    story.append(Spacer(1, 14))
+
+    # =================================================
+    # CURVA S
+    # =================================================
+
+    story.append(
+        Paragraph(
+            "Curva S - Plan vs Real",
+            estilo_h2
+        )
+    )
+
+    curva_pdf = construir_curva_s_pdf(
+        actividades,
+        avances
+    )
+
+    if curva_pdf is not None:
+        story.append(curva_pdf)
+    else:
+        story.append(
+            Paragraph(
+                "No existe información suficiente para construir la Curva S.",
+                styles["BodyText"]
+            )
+        )
+
+    story.append(Spacer(1, 12))
+
+    # =================================================
+    # SEMÁFORO EJECUTIVO
+    # =================================================
+
+    estado_gerencial = calcular_semaforo_pdf(
+        actividades,
+        avances
+    )
+
+    story.append(
+        Paragraph(
+            "Semáforo ejecutivo",
+            estilo_h2
+        )
+    )
+
+    if estado_gerencial.empty:
+
+        story.append(
+            Paragraph(
+                "No existe información suficiente para calcular alertas.",
+                styles["BodyText"]
+            )
+        )
+
+    else:
+
+        conteos = {
+            nivel: int(
+                (
+                    estado_gerencial["NIVEL"]
+                    == nivel
+                ).sum()
+            )
+            for nivel in [
+                "VERDE",
+                "AMARILLO",
+                "NARANJA",
+                "ROJO"
+            ]
+        }
+
+        resumen_semaforo = [
+            [
+                "En línea",
+                "En riesgo",
+                "Recuperación",
+                "Intervención"
+            ],
+            [
+                str(conteos["VERDE"]),
+                str(conteos["AMARILLO"]),
+                str(conteos["NARANJA"]),
+                str(conteos["ROJO"])
+            ]
+        ]
+
+        tabla_semaforo = Table(
+            resumen_semaforo,
+            colWidths=[100, 100, 100, 100]
+        )
+
+        tabla_semaforo.setStyle(
+            TableStyle([
+                (
+                    "BACKGROUND",
+                    (0, 0),
+                    (-1, 0),
+                    colors.HexColor("#F2F4F7")
+                ),
+                (
+                    "TEXTCOLOR",
+                    (0, 0),
+                    (-1, 0),
+                    colors.HexColor("#344054")
+                ),
+                (
+                    "FONTNAME",
+                    (0, 0),
+                    (-1, 0),
+                    "Helvetica-Bold"
+                ),
+                (
+                    "FONTNAME",
+                    (0, 1),
+                    (-1, 1),
+                    "Helvetica-Bold"
+                ),
+                (
+                    "FONTSIZE",
+                    (0, 1),
+                    (-1, 1),
+                    14
+                ),
+                (
+                    "ALIGN",
+                    (0, 0),
+                    (-1, -1),
+                    "CENTER"
+                ),
+                (
+                    "GRID",
+                    (0, 0),
+                    (-1, -1),
+                    0.4,
+                    colors.HexColor("#D0D5DD")
+                ),
+                (
+                    "TOPPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    7
+                ),
+                (
+                    "BOTTOMPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    7
+                )
+            ])
+        )
+
+        story.append(tabla_semaforo)
+        story.append(Spacer(1, 10))
+
+        foco = (
+            estado_gerencial[
+                estado_gerencial[
+                    "NIVEL"
+                ].isin(
+                    [
+                        "ROJO",
+                        "NARANJA",
+                        "AMARILLO"
+                    ]
+                )
+            ]
+            .sort_values(
+                [
+                    "_PRIORIDAD",
+                    "avance_real"
+                ],
+                ascending=[
+                    True,
+                    True
+                ]
+            )
+            .head(10)
+            .copy()
+        )
+
+        if foco.empty:
+
+            story.append(
+                Paragraph(
+                    "No existen desviaciones que requieran atención gerencial.",
+                    styles["BodyText"]
+                )
+            )
+
+        else:
+
+            story.append(
+                Paragraph(
+                    "Foco de atención gerencial",
+                    styles["Heading3"]
+                )
+            )
+
+            foco_data = [
+                [
+                    "Nivel",
+                    "Actividad",
+                    "Plan",
+                    "Real",
+                    "Desv.",
+                    "Acción requerida"
+                ]
+            ]
+
+            for _, fila in foco.iterrows():
+
+                foco_data.append([
+                    str(
+                        fila.get(
+                            "NIVEL",
+                            ""
+                        )
+                    ),
+                    Paragraph(
+                        (
+                            str(
+                                fila.get(
+                                    "codigo_actividad",
+                                    ""
+                                )
+                            )
+                            + " - "
+                            + str(
+                                fila.get(
+                                    "descripcion",
+                                    ""
+                                )
+                            )
+                        )[:120],
+                        styles["BodyText"]
+                    ),
+                    f"{float(fila.get('PLAN ACTUAL (%)', 0)):.0f}%",
+                    f"{float(fila.get('avance_real', 0)):.0f}%",
+                    f"{float(fila.get('DESVIACIÓN (pp)', 0)):.0f}",
+                    Paragraph(
+                        str(
+                            fila.get(
+                                "ACCIÓN REQUERIDA",
+                                ""
+                            )
+                        ),
+                        styles["BodyText"]
+                    )
+                ])
+
+            tabla_foco = Table(
+                foco_data,
+                colWidths=[
+                    48,
+                    150,
+                    38,
+                    38,
+                    38,
+                    120
+                ],
+                repeatRows=1
+            )
+
+            tabla_foco.setStyle(
+                TableStyle([
+                    (
+                        "BACKGROUND",
+                        (0, 0),
+                        (-1, 0),
+                        colors.HexColor("#082D55")
+                    ),
+                    (
+                        "TEXTCOLOR",
+                        (0, 0),
+                        (-1, 0),
+                        colors.white
+                    ),
+                    (
+                        "FONTNAME",
+                        (0, 0),
+                        (-1, 0),
+                        "Helvetica-Bold"
+                    ),
+                    (
+                        "FONTSIZE",
+                        (0, 0),
+                        (-1, -1),
+                        6.8
+                    ),
+                    (
+                        "VALIGN",
+                        (0, 0),
+                        (-1, -1),
+                        "TOP"
+                    ),
+                    (
+                        "GRID",
+                        (0, 0),
+                        (-1, -1),
+                        0.35,
+                        colors.HexColor("#D0D5DD")
+                    ),
+                    (
+                        "ROWBACKGROUNDS",
+                        (0, 1),
+                        (-1, -1),
+                        [
+                            colors.white,
+                            colors.HexColor("#F8FAFC")
+                        ]
+                    ),
+                    (
+                        "TOPPADDING",
+                        (0, 0),
+                        (-1, -1),
+                        4
+                    ),
+                    (
+                        "BOTTOMPADDING",
+                        (0, 0),
+                        (-1, -1),
+                        4
+                    )
+                ])
+            )
+
+            story.append(tabla_foco)
+
+    story.append(Spacer(1, 14))
 
     if not avances.empty:
 
@@ -5208,12 +5965,278 @@ if rol == "admin":
 
     elif pagina_admin == "Reportes":
 
-        st.subheader("Reportes consolidados")
+        st.subheader("Reportes gerenciales")
 
-        st.info(
-            "Aquí aparecerán los reportes generales "
-            "de Chinalco."
+        st.caption(
+            "Genere el informe ejecutivo de Todas las áreas "
+            "o de un área específica sin salir de la sesión ADMIN."
         )
+
+        resultado_areas_reporte_admin = (
+            supabase
+            .table("areas")
+            .select("id,codigo,nombre")
+            .eq("activo", True)
+            .order("id")
+            .execute()
+        )
+
+        areas_reporte_admin = (
+            resultado_areas_reporte_admin.data
+            or []
+        )
+
+        if not areas_reporte_admin:
+
+            st.warning(
+                "No existen áreas activas configuradas."
+            )
+
+        else:
+
+            opciones_reporte_admin = {
+                "Todas las áreas": None
+            }
+
+            for area in areas_reporte_admin:
+                opciones_reporte_admin[
+                    area["nombre"]
+                ] = area["id"]
+
+            vista_reporte_admin = st.selectbox(
+                "Seleccionar reporte",
+                list(
+                    opciones_reporte_admin.keys()
+                ),
+                key="selector_reporte_admin"
+            )
+
+            area_reporte_admin_id = (
+                opciones_reporte_admin[
+                    vista_reporte_admin
+                ]
+            )
+
+            if area_reporte_admin_id is None:
+
+                ids_area_reporte_admin = [
+                    area["id"]
+                    for area in areas_reporte_admin
+                ]
+
+                nombre_reporte_admin = (
+                    "Todas las áreas"
+                )
+
+                codigo_reporte_admin = (
+                    "consolidado"
+                )
+
+            else:
+
+                ids_area_reporte_admin = [
+                    area_reporte_admin_id
+                ]
+
+                area_obj_reporte_admin = next(
+                    area
+                    for area in areas_reporte_admin
+                    if area["id"]
+                    == area_reporte_admin_id
+                )
+
+                nombre_reporte_admin = (
+                    area_obj_reporte_admin[
+                        "nombre"
+                    ]
+                )
+
+                codigo_reporte_admin = (
+                    area_obj_reporte_admin[
+                        "codigo"
+                    ]
+                )
+
+            ots_reporte_admin = (
+                supabase
+                .table("ots")
+                .select(
+                    "id,ot,equipo,descripcion,activo,area_id"
+                )
+                .in_(
+                    "area_id",
+                    ids_area_reporte_admin
+                )
+                .eq(
+                    "activo",
+                    True
+                )
+                .execute()
+            ).data or []
+
+            if not ots_reporte_admin:
+
+                st.warning(
+                    "No existen OTs activas para "
+                    "la vista seleccionada."
+                )
+
+            else:
+
+                df_ots_reporte_admin = pd.DataFrame(
+                    ots_reporte_admin
+                )
+
+                ids_ots_reporte_admin = [
+                    ot["id"]
+                    for ot in ots_reporte_admin
+                ]
+
+                actividades_reporte_admin = (
+                    supabase
+                    .table("actividades")
+                    .select(
+                        "id,ot_id,codigo_actividad,descripcion,"
+                        "supervisor,especialidad,grupo,peso,"
+                        "inicio_plan,fin_plan,seccion,personal,"
+                        "duracion_h,hh_plan,critica,activo"
+                    )
+                    .in_(
+                        "ot_id",
+                        ids_ots_reporte_admin
+                    )
+                    .eq(
+                        "activo",
+                        True
+                    )
+                    .execute()
+                ).data or []
+
+                if not actividades_reporte_admin:
+
+                    st.warning(
+                        "No existen actividades para "
+                        "la vista seleccionada."
+                    )
+
+                else:
+
+                    df_actividades_reporte_admin = (
+                        pd.DataFrame(
+                            actividades_reporte_admin
+                        )
+                    )
+
+                    ids_act_reporte_admin = (
+                        df_actividades_reporte_admin[
+                            "id"
+                        ]
+                        .dropna()
+                        .tolist()
+                    )
+
+                    avances_reporte_admin = (
+                        supabase
+                        .table("avances_actividad")
+                        .select(
+                            "id,actividad_id,avance,"
+                            "descripcion_avance,observaciones,"
+                            "tipo_evidencia,critica,evidencias,"
+                            "usuario,fecha_registro"
+                        )
+                        .in_(
+                            "actividad_id",
+                            ids_act_reporte_admin
+                        )
+                        .execute()
+                    ).data or []
+
+                    df_avances_reporte_admin = (
+                        pd.DataFrame(
+                            avances_reporte_admin
+                        )
+                    )
+
+                    kpis_reporte_admin = compute_kpis(
+                        df_actividades_reporte_admin,
+                        df_avances_reporte_admin
+                    )
+
+                    ar1, ar2, ar3, ar4 = st.columns(
+                        4
+                    )
+
+                    with ar1:
+                        st.metric(
+                            "OTs",
+                            len(
+                                df_ots_reporte_admin
+                            )
+                        )
+
+                    with ar2:
+                        st.metric(
+                            "Actividades",
+                            kpis_reporte_admin[
+                                "actividades"
+                            ]
+                        )
+
+                    with ar3:
+                        st.metric(
+                            "Avance general",
+                            f"{kpis_reporte_admin['avance_general']:.1f}%"
+                        )
+
+                    with ar4:
+                        st.metric(
+                            "SPI",
+                            f"{kpis_reporte_admin['spi']:.2f}"
+                        )
+
+                    st.divider()
+
+                    st.markdown(
+                        "### Informe ejecutivo para gerencia"
+                    )
+
+                    st.write(
+                        "Incluye KPIs, Curva S PLAN vs REAL, "
+                        "semáforo ejecutivo, foco de atención, "
+                        "acciones requeridas, resumen operativo "
+                        "y detalle por OT."
+                    )
+
+                    try:
+
+                        pdf_admin_bytes = (
+                            construir_pdf_ejecutivo_area(
+                                df_ots_reporte_admin,
+                                df_actividades_reporte_admin,
+                                df_avances_reporte_admin,
+                                nombre_reporte_admin
+                            )
+                        )
+
+                        st.download_button(
+                            "Descargar informe gerencial PDF",
+                            data=pdf_admin_bytes,
+                            file_name=(
+                                "PDP_Chinalco_"
+                                f"{str(codigo_reporte_admin).lower()}_"
+                                f"{datetime.now():%Y%m%d_%H%M}.pdf"
+                            ),
+                            mime="application/pdf",
+                            type="primary",
+                            use_container_width=True
+                        )
+
+                    except Exception as exc:
+
+                        st.error(
+                            "No fue posible generar el "
+                            f"reporte gerencial: {exc}"
+                        )
 
 
 else:
