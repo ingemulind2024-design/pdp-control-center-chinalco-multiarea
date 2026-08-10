@@ -1,9 +1,13 @@
+import io
+import uuid
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 
+from PIL import Image, ImageOps
 from datetime import datetime, timezone
 from supabase import create_client
 
@@ -93,6 +97,194 @@ def limpiar_fecha(valor):
         return fecha.strftime("%Y-%m-%dT%H:%M:%S")
     except Exception:
         return None
+
+
+# =====================================================
+# EVIDENCIAS FOTOGRÁFICAS
+# =====================================================
+
+BUCKET_EVIDENCIAS = "evidencias-ots"
+
+
+def comprimir_imagen(
+    archivo,
+    max_dimension=1600,
+    calidad=80
+):
+    """
+    Comprime automáticamente fotografías provenientes
+    de celular o PC y devuelve bytes JPEG optimizados.
+    """
+
+    archivo.seek(0)
+
+    imagen = Image.open(archivo)
+
+    # Corrige la orientación EXIF de fotografías de celular
+    imagen = ImageOps.exif_transpose(imagen)
+
+    # Convierte PNG / WEBP / transparencias a RGB
+    if imagen.mode in ("RGBA", "LA", "P"):
+
+        if imagen.mode == "P":
+            imagen = imagen.convert("RGBA")
+
+        fondo = Image.new(
+            "RGB",
+            imagen.size,
+            "white"
+        )
+
+        if imagen.mode in ("RGBA", "LA"):
+            fondo.paste(
+                imagen,
+                mask=imagen.getchannel("A")
+            )
+        else:
+            fondo.paste(imagen)
+
+        imagen = fondo
+
+    elif imagen.mode != "RGB":
+        imagen = imagen.convert("RGB")
+
+    # Reduce resolución manteniendo proporción
+    imagen.thumbnail(
+        (max_dimension, max_dimension),
+        Image.Resampling.LANCZOS
+    )
+
+    salida = io.BytesIO()
+
+    imagen.save(
+        salida,
+        format="JPEG",
+        quality=calidad,
+        optimize=True,
+        progressive=True
+    )
+
+    salida.seek(0)
+
+    return salida.getvalue()
+
+
+def subir_evidencia(
+    archivo,
+    ot,
+    codigo_actividad,
+    tipo_evidencia
+):
+    """
+    Comprime y sube una fotografía al bucket evidencias-ots.
+    Retorna la metadata que se almacenará en el JSONB
+    avances_actividad.evidencias.
+    """
+
+    bytes_originales = archivo.getvalue()
+    tamano_original = len(bytes_originales)
+
+    bytes_comprimidos = comprimir_imagen(
+        archivo,
+        max_dimension=1600,
+        calidad=80
+    )
+
+    tamano_comprimido = len(bytes_comprimidos)
+
+    ahorro = (
+        (1 - tamano_comprimido / tamano_original) * 100
+        if tamano_original > 0
+        else 0
+    )
+
+    ot_segura = "".join(
+        caracter
+        for caracter in str(ot)
+        if caracter.isalnum() or caracter in "-_"
+    )
+
+    actividad_segura = "".join(
+        caracter
+        for caracter in str(codigo_actividad)
+        if caracter.isalnum() or caracter in "-_"
+    )
+
+    tipo_seguro = "".join(
+        caracter
+        for caracter in str(tipo_evidencia).lower()
+        if caracter.isalnum() or caracter in "-_"
+    )
+
+    nombre_archivo = (
+        f"{datetime.now(timezone.utc):%Y%m%d_%H%M%S}_"
+        f"{uuid.uuid4().hex[:10]}.jpg"
+    )
+
+    ruta = (
+        f"{ot_segura}/"
+        f"{actividad_segura}/"
+        f"{tipo_seguro}/"
+        f"{nombre_archivo}"
+    )
+
+    (
+        supabase
+        .storage
+        .from_(BUCKET_EVIDENCIAS)
+        .upload(
+            path=ruta,
+            file=bytes_comprimidos,
+            file_options={
+                "content-type": "image/jpeg",
+                "upsert": "false"
+            }
+        )
+    )
+
+    url_publica = (
+        supabase
+        .storage
+        .from_(BUCKET_EVIDENCIAS)
+        .get_public_url(ruta)
+    )
+
+    return {
+        "url": url_publica,
+        "path": ruta,
+        "nombre_original": archivo.name,
+        "tipo": tipo_evidencia,
+        "tamano_original": tamano_original,
+        "tamano_comprimido": tamano_comprimido,
+        "ahorro_pct": round(ahorro, 1)
+    }
+
+
+def subir_evidencias(
+    archivos,
+    ot,
+    codigo_actividad,
+    tipo_evidencia
+):
+    """
+    Procesa varias fotografías y devuelve una lista JSON.
+    """
+
+    evidencias = []
+
+    for archivo in archivos or []:
+
+        evidencia = subir_evidencia(
+            archivo,
+            ot,
+            codigo_actividad,
+            tipo_evidencia
+        )
+
+        evidencias.append(evidencia)
+
+    return evidencias
+
 
 # =====================================================
 # FUNCIONES DEL DASHBOARD
@@ -2359,10 +2551,44 @@ else:
                     "Observaciones"
                 )
 
-                st.info(
-                    "En el siguiente paso conectaremos la carga "
-                    "de evidencias fotográficas."
+                archivos_evidencia = st.file_uploader(
+                    "Evidencias fotográficas",
+                    type=["jpg", "jpeg", "png", "webp"],
+                    accept_multiple_files=True,
+                    help=(
+                        "Puede tomar fotografías desde el celular "
+                        "o seleccionarlas desde la PC. "
+                        "Las imágenes se comprimirán automáticamente."
+                    )
                 )
+
+                if archivos_evidencia:
+
+                    st.caption(
+                        f"{len(archivos_evidencia)} "
+                        "fotografía(s) seleccionada(s)."
+                    )
+
+                    columnas_preview = st.columns(
+                        min(
+                            len(archivos_evidencia),
+                            4
+                        )
+                    )
+
+                    for indice, archivo_preview in enumerate(
+                        archivos_evidencia[:4]
+                    ):
+
+                        with columnas_preview[
+                            indice % len(columnas_preview)
+                        ]:
+
+                            st.image(
+                                archivo_preview,
+                                caption=archivo_preview.name,
+                                use_container_width=True
+                            )
 
                 guardar = st.button(
                     "Guardar avance",
@@ -2382,6 +2608,21 @@ else:
 
                         try:
 
+                            evidencias_urls = []
+
+                            if archivos_evidencia:
+
+                                with st.spinner(
+                                    "Comprimiendo y cargando evidencias..."
+                                ):
+
+                                    evidencias_urls = subir_evidencias(
+                                        archivos_evidencia,
+                                        ot_seleccionada["ot"],
+                                        actividad["codigo_actividad"],
+                                        tipo_evidencia
+                                    )
+
                             payload = {
                                 "actividad_id": actividad["id"],
                                 "avance": avance,
@@ -2389,7 +2630,7 @@ else:
                                 "observaciones": observaciones.strip(),
                                 "tipo_evidencia": tipo_evidencia,
                                 "critica": critica,
-                                "evidencias": [],
+                                "evidencias": evidencias_urls,
                                 "usuario": usuario["username"]
                             }
 
@@ -2400,9 +2641,47 @@ else:
                                 .execute()
                             )
 
-                            st.success(
-                                "Avance registrado correctamente."
-                            )
+                            if evidencias_urls:
+
+                                total_original = sum(
+                                    evidencia.get(
+                                        "tamano_original",
+                                        0
+                                    )
+                                    for evidencia in evidencias_urls
+                                )
+
+                                total_comprimido = sum(
+                                    evidencia.get(
+                                        "tamano_comprimido",
+                                        0
+                                    )
+                                    for evidencia in evidencias_urls
+                                )
+
+                                ahorro_total = (
+                                    (
+                                        1
+                                        - total_comprimido
+                                        / total_original
+                                    )
+                                    * 100
+                                    if total_original > 0
+                                    else 0
+                                )
+
+                                st.success(
+                                    f"Avance registrado correctamente con "
+                                    f"{len(evidencias_urls)} evidencia(s). "
+                                    f"Compresión aproximada: "
+                                    f"{ahorro_total:.0f}%."
+                                )
+
+                            else:
+
+                                st.success(
+                                    "Avance registrado correctamente."
+                                )
 
                         except Exception as exc:
 
@@ -2438,10 +2717,295 @@ else:
 
         st.subheader(f"Evidencias - {nombre_area}")
 
-        st.info(
-            "Aquí se mostrarán únicamente las evidencias "
-            "correspondientes a esta área."
-        )
+        if not ots_area:
+
+            st.warning(
+                "Todavía no existen OTs cargadas para esta área."
+            )
+
+        else:
+
+            ids_ots_evidencias = [
+                ot["id"]
+                for ot in ots_area
+            ]
+
+            actividades_evidencias = (
+                supabase
+                .table("actividades")
+                .select(
+                    "id,ot_id,codigo_actividad,descripcion"
+                )
+                .in_("ot_id", ids_ots_evidencias)
+                .eq("activo", True)
+                .execute()
+            ).data or []
+
+            if not actividades_evidencias:
+
+                st.info(
+                    "No existen actividades disponibles."
+                )
+
+            else:
+
+                ids_actividades_evidencias = [
+                    actividad["id"]
+                    for actividad in actividades_evidencias
+                ]
+
+                registros_evidencias = (
+                    supabase
+                    .table("avances_actividad")
+                    .select(
+                        "id,actividad_id,avance,"
+                        "descripcion_avance,observaciones,"
+                        "tipo_evidencia,evidencias,"
+                        "usuario,fecha_registro"
+                    )
+                    .in_(
+                        "actividad_id",
+                        ids_actividades_evidencias
+                    )
+                    .order(
+                        "fecha_registro",
+                        desc=True
+                    )
+                    .execute()
+                ).data or []
+
+                registros_con_fotos = [
+                    registro
+                    for registro in registros_evidencias
+                    if registro.get("evidencias")
+                ]
+
+                if not registros_con_fotos:
+
+                    st.info(
+                        "Todavía no existen evidencias fotográficas "
+                        "registradas para esta área."
+                    )
+
+                else:
+
+                    mapa_ots_evidencias = {
+                        ot["id"]: ot
+                        for ot in ots_area
+                    }
+
+                    mapa_actividades_evidencias = {
+                        actividad["id"]: actividad
+                        for actividad in actividades_evidencias
+                    }
+
+                    opciones_ot = ["TODAS"] + sorted(
+                        {
+                            str(ot.get("ot", ""))
+                            for ot in ots_area
+                        }
+                    )
+
+                    f1, f2 = st.columns(2)
+
+                    with f1:
+
+                        filtro_ot_evidencias = st.selectbox(
+                            "Filtrar por OT",
+                            opciones_ot,
+                            key="filtro_evidencias_ot"
+                        )
+
+                    with f2:
+
+                        filtro_tipo_evidencias = st.selectbox(
+                            "Tipo de evidencia",
+                            [
+                                "TODAS",
+                                "INICIO",
+                                "DURANTE",
+                                "FINAL"
+                            ],
+                            key="filtro_evidencias_tipo"
+                        )
+
+                    registros_filtrados = []
+
+                    for registro in registros_con_fotos:
+
+                        actividad = (
+                            mapa_actividades_evidencias.get(
+                                registro["actividad_id"],
+                                {}
+                            )
+                        )
+
+                        ot = mapa_ots_evidencias.get(
+                            actividad.get("ot_id"),
+                            {}
+                        )
+
+                        if (
+                            filtro_ot_evidencias != "TODAS"
+                            and str(ot.get("ot", ""))
+                            != filtro_ot_evidencias
+                        ):
+                            continue
+
+                        if (
+                            filtro_tipo_evidencias != "TODAS"
+                            and str(
+                                registro.get(
+                                    "tipo_evidencia",
+                                    ""
+                                )
+                            ).upper()
+                            != filtro_tipo_evidencias
+                        ):
+                            continue
+
+                        registros_filtrados.append(
+                            (
+                                registro,
+                                actividad,
+                                ot
+                            )
+                        )
+
+                    st.caption(
+                        f"{len(registros_filtrados)} "
+                        "registro(s) con evidencia."
+                    )
+
+                    for (
+                        registro,
+                        actividad,
+                        ot
+                    ) in registros_filtrados:
+
+                        titulo = (
+                            f"OT {ot.get('ot', '')} · "
+                            f"{actividad.get('codigo_actividad', '')} · "
+                            f"{registro.get('avance', 0)}%"
+                        )
+
+                        with st.expander(
+                            titulo,
+                            expanded=False
+                        ):
+
+                            d1, d2, d3 = st.columns(3)
+
+                            with d1:
+                                st.write(
+                                    "**Tipo:** "
+                                    f"{registro.get('tipo_evidencia', '')}"
+                                )
+
+                            with d2:
+                                st.write(
+                                    "**Usuario:** "
+                                    f"{registro.get('usuario', '')}"
+                                )
+
+                            with d3:
+                                fecha_evidencia = pd.to_datetime(
+                                    registro.get("fecha_registro"),
+                                    errors="coerce",
+                                    utc=True
+                                )
+
+                                if not pd.isna(fecha_evidencia):
+
+                                    fecha_evidencia = (
+                                        fecha_evidencia
+                                        .tz_convert("America/Lima")
+                                    )
+
+                                    fecha_texto = (
+                                        fecha_evidencia.strftime(
+                                            "%d/%m/%Y %H:%M"
+                                        )
+                                    )
+
+                                else:
+                                    fecha_texto = ""
+
+                                st.write(
+                                    "**Fecha:** "
+                                    f"{fecha_texto}"
+                                )
+
+                            st.write(
+                                "**Actividad:** "
+                                f"{actividad.get('descripcion', '')}"
+                            )
+
+                            st.write(
+                                "**Avance reportado:** "
+                                f"{registro.get('descripcion_avance', '')}"
+                            )
+
+                            observacion = (
+                                registro.get("observaciones")
+                                or ""
+                            )
+
+                            if observacion:
+                                st.write(
+                                    "**Observaciones:** "
+                                    f"{observacion}"
+                                )
+
+                            evidencias_lista = (
+                                registro.get("evidencias")
+                                or []
+                            )
+
+                            columnas_fotos = st.columns(
+                                min(
+                                    len(evidencias_lista),
+                                    3
+                                )
+                            )
+
+                            for indice, evidencia in enumerate(
+                                evidencias_lista
+                            ):
+
+                                if isinstance(
+                                    evidencia,
+                                    str
+                                ):
+                                    url_evidencia = evidencia
+                                    nombre_evidencia = (
+                                        f"Evidencia {indice + 1}"
+                                    )
+
+                                else:
+                                    url_evidencia = evidencia.get(
+                                        "url",
+                                        ""
+                                    )
+                                    nombre_evidencia = (
+                                        evidencia.get(
+                                            "nombre_original"
+                                        )
+                                        or f"Evidencia {indice + 1}"
+                                    )
+
+                                if not url_evidencia:
+                                    continue
+
+                                with columnas_fotos[
+                                    indice % len(columnas_fotos)
+                                ]:
+
+                                    st.image(
+                                        url_evidencia,
+                                        caption=nombre_evidencia,
+                                        use_container_width=True
+                                    )
 
 
     # =====================================================
