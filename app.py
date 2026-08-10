@@ -1368,62 +1368,754 @@ else:
 
         st.subheader(f"Dashboard - {nombre_area}")
 
-        st.success(
-            f"Visualización exclusiva del área {nombre_area}."
-        )
-
-        total_ots = len(ots_area)
-
-        # ============================================
-        # ACTIVIDADES DEL ÁREA
-        # ============================================
+        # =================================================
+        # 1. CARGAR ACTIVIDADES DEL ÁREA
+        # =================================================
 
         ot_ids = [ot["id"] for ot in ots_area]
 
         if ot_ids:
-            actividades_area = (
+
+            actividades_data = (
                 supabase
                 .table("actividades")
-                .select("id,ot_id,peso")
+                .select(
+                    "id,ot_id,codigo_actividad,descripcion,"
+                    "supervisor,especialidad,grupo,peso,"
+                    "inicio_plan,fin_plan,seccion,personal,"
+                    "duracion_h,hh_plan,critica,activo"
+                )
                 .in_("ot_id", ot_ids)
                 .eq("activo", True)
                 .execute()
             ).data or []
+
         else:
-            actividades_area = []
+            actividades_data = []
 
-        total_actividades = len(actividades_area)
+        df_ots = pd.DataFrame(ots_area)
+        df_actividades = pd.DataFrame(actividades_data)
 
-        # Al inicio todas las actividades son pendientes
-        total_pendientes = total_actividades
+        # =================================================
+        # 2. CARGAR AVANCES
+        # =================================================
 
-        # Todavía no existen avances registrados
-        avance_general = 0
+        if not df_actividades.empty:
 
-        col1, col2, col3, col4 = st.columns(4)
-
-        with col1:
-            st.metric("OTs registradas", total_ots)
-
-        with col2:
-            st.metric("Actividades", total_actividades)
-
-        with col3:
-            st.metric("Avance general", f"{avance_general}%")
-
-        with col4:
-            st.metric("Pendientes", total_pendientes)
-
-        st.divider()
-
-        if total_actividades > 0:
-            st.success(
-                f"Planificación cargada correctamente: "
-                f"{total_ots} OTs y {total_actividades} actividades."
+            actividad_ids = (
+                df_actividades["id"]
+                .dropna()
+                .tolist()
             )
+
+            avances_data = (
+                supabase
+                .table("avances_actividad")
+                .select(
+                    "id,actividad_id,avance,"
+                    "descripcion_avance,observaciones,"
+                    "tipo_evidencia,critica,evidencias,"
+                    "usuario,fecha_registro"
+                )
+                .in_("actividad_id", actividad_ids)
+                .execute()
+            ).data or []
+
         else:
+            avances_data = []
+
+        df_avances = pd.DataFrame(avances_data)
+
+        # =================================================
+        # 3. SI TODAVÍA NO HAY PLANIFICACIÓN
+        # =================================================
+
+        if df_actividades.empty:
+
             st.warning(
                 "No existen actividades cargadas para esta área."
+            )
+
+        else:
+
+            # =============================================
+            # 4. PREPARAR DATOS
+            # =============================================
+
+            df_estado = build_activity_status(
+                df_actividades,
+                df_avances
+            )
+
+            kpis = compute_kpis(
+                df_actividades,
+                df_avances
+            )
+
+            curva_s = build_s_curve(
+                df_actividades,
+                df_avances
+            )
+
+            # Incorporar información de OT y equipo
+            if not df_ots.empty:
+
+                datos_ot = (
+                    df_ots[
+                        [
+                            "id",
+                            "ot",
+                            "equipo",
+                            "descripcion"
+                        ]
+                    ]
+                    .rename(
+                        columns={
+                            "id": "ot_id",
+                            "descripcion": "descripcion_ot"
+                        }
+                    )
+                )
+
+                df_estado = df_estado.merge(
+                    datos_ot,
+                    on="ot_id",
+                    how="left"
+                )
+
+            # =============================================
+            # 5. ENCABEZADO
+            # =============================================
+
+            st.caption(
+                f"Control operativo exclusivo de {nombre_area} · "
+                f"{len(df_ots)} OTs · "
+                f"{len(df_actividades)} actividades"
+            )
+
+            # =============================================
+            # 6. KPIs PRINCIPALES
+            # =============================================
+
+            avance_real = float(
+                kpis.get("avance_general", 0)
+            )
+
+            avance_plan = float(
+                kpis.get("avance_plan", 0)
+            )
+
+            desviacion = (
+                avance_real - avance_plan
+            )
+
+            spi = float(
+                kpis.get("spi", 0)
+            )
+
+            hh_plan = float(
+                kpis.get("hh_plan", 0)
+            )
+
+            hh_ganadas = float(
+                kpis.get("hh_ganadas", 0)
+            )
+
+            k1, k2, k3, k4, k5, k6 = st.columns(6)
+
+            with k1:
+                st.metric(
+                    "PLAN",
+                    f"{avance_plan:.1f}%"
+                )
+
+            with k2:
+                st.metric(
+                    "REAL",
+                    f"{avance_real:.1f}%",
+                    delta=f"{desviacion:+.1f} pp"
+                )
+
+            with k3:
+                st.metric(
+                    "SPI",
+                    f"{spi:.2f}"
+                )
+
+            with k4:
+                st.metric(
+                    "CULMINADAS",
+                    int(kpis.get("culminadas", 0))
+                )
+
+            with k5:
+                st.metric(
+                    "PENDIENTES",
+                    int(kpis.get("pendientes", 0))
+                )
+
+            with k6:
+                st.metric(
+                    "HH GANADAS",
+                    f"{hh_ganadas:,.0f}",
+                    delta=f"Plan {hh_plan:,.0f}"
+                )
+
+            # =============================================
+            # 7. SEMÁFORO DEL PROYECTO
+            # =============================================
+
+            if avance_plan <= 0:
+
+                st.info(
+                    "La planificación aún no ha iniciado "
+                    "o no existe un avance plan calculable."
+                )
+
+            elif spi >= 1:
+
+                st.success(
+                    f"🟢 EN LÍNEA / ADELANTADO · "
+                    f"SPI {spi:.2f}"
+                )
+
+            elif spi >= 0.90:
+
+                st.warning(
+                    f"🟡 DESVIACIÓN CONTROLABLE · "
+                    f"SPI {spi:.2f}"
+                )
+
+            else:
+
+                st.error(
+                    f"🔴 DESVIACIÓN CRÍTICA · "
+                    f"SPI {spi:.2f}"
+                )
+
+            st.divider()
+
+            # =============================================
+            # 8. CURVA S
+            # =============================================
+
+            st.subheader("Curva S - Plan vs Real")
+
+            if curva_s.empty:
+
+                st.info(
+                    "No existen fechas suficientes para "
+                    "construir la Curva S."
+                )
+
+            else:
+
+                fig_s = go.Figure()
+
+                fig_s.add_trace(
+                    go.Scatter(
+                        x=curva_s["fecha"],
+                        y=curva_s["PLAN"],
+                        mode="lines+markers",
+                        name="PLAN"
+                    )
+                )
+
+                fig_s.add_trace(
+                    go.Scatter(
+                        x=curva_s["fecha"],
+                        y=curva_s["REAL"],
+                        mode="lines+markers",
+                        name="REAL",
+                        connectgaps=False
+                    )
+                )
+
+                fig_s.update_layout(
+                    xaxis_title="Fecha / Hora",
+                    yaxis_title="Avance acumulado (%)",
+                    yaxis=dict(
+                        range=[0, 105]
+                    ),
+                    hovermode="x unified",
+                    legend_title="Curva",
+                    height=500
+                )
+
+                fig_s.update_yaxes(
+                    ticksuffix="%"
+                )
+
+                st.plotly_chart(
+                    fig_s,
+                    use_container_width=True
+                )
+
+            st.divider()
+
+            # =============================================
+            # 9. AVANCE POR OT
+            # =============================================
+
+            st.subheader("Avance por OT")
+
+            if "ot" in df_estado.columns:
+
+                df_ot = (
+                    df_estado
+                    .groupby(
+                        ["ot", "equipo"],
+                        dropna=False
+                    )
+                    .apply(
+                        lambda grupo: pd.Series({
+                            "Avance": weighted_progress(
+                                grupo
+                            ),
+                            "Actividades": len(grupo),
+                            "Pendientes": int(
+                                (
+                                    grupo["avance_real"] < 100
+                                ).sum()
+                            )
+                        })
+                    )
+                    .reset_index()
+                )
+
+                df_ot["OT / Equipo"] = (
+                    df_ot["ot"].fillna("").astype(str)
+                    + " - "
+                    + df_ot["equipo"].fillna(
+                        "Sin equipo"
+                    ).astype(str)
+                )
+
+                df_ot = df_ot.sort_values(
+                    "Avance",
+                    ascending=True
+                )
+
+                fig_ot = px.bar(
+                    df_ot,
+                    x="Avance",
+                    y="OT / Equipo",
+                    orientation="h",
+                    text="Avance",
+                    hover_data=[
+                        "Actividades",
+                        "Pendientes"
+                    ]
+                )
+
+                fig_ot.update_traces(
+                    texttemplate="%{text:.1f}%",
+                    textposition="outside"
+                )
+
+                fig_ot.update_layout(
+                    xaxis_title="Avance (%)",
+                    yaxis_title="",
+                    xaxis=dict(
+                        range=[0, 105]
+                    ),
+                    height=max(
+                        420,
+                        len(df_ot) * 32
+                    )
+                )
+
+                st.plotly_chart(
+                    fig_ot,
+                    use_container_width=True
+                )
+
+            # =============================================
+            # 10. ESTADO DE ACTIVIDADES
+            # =============================================
+
+            st.subheader("Estado de actividades")
+
+            estado_resumen = pd.DataFrame({
+                "Estado": [
+                    "Culminadas",
+                    "En ejecución",
+                    "No iniciadas"
+                ],
+                "Cantidad": [
+                    int(kpis.get("culminadas", 0)),
+                    int(kpis.get("parciales", 0)),
+                    int(kpis.get("no_iniciadas", 0))
+                ]
+            })
+
+            fig_estado = px.bar(
+                estado_resumen,
+                x="Estado",
+                y="Cantidad",
+                text="Cantidad"
+            )
+
+            fig_estado.update_traces(
+                textposition="outside"
+            )
+
+            fig_estado.update_layout(
+                yaxis_title="N.º de actividades",
+                xaxis_title="",
+                height=380
+            )
+
+            st.plotly_chart(
+                fig_estado,
+                use_container_width=True
+            )
+
+            st.divider()
+
+            # =============================================
+            # 11. AVANCE POR ESPECIALIDAD
+            # =============================================
+
+            c_esp, c_sup = st.columns(2)
+
+            with c_esp:
+
+                st.subheader(
+                    "Avance por especialidad"
+                )
+
+                if "especialidad" in df_estado.columns:
+
+                    especialidad = (
+                        df_estado
+                        .groupby(
+                            "especialidad",
+                            dropna=False
+                        )
+                        .apply(
+                            lambda grupo: pd.Series({
+                                "Avance": weighted_progress(
+                                    grupo
+                                ),
+                                "Actividades": len(grupo),
+                                "Pendientes": int(
+                                    (
+                                        grupo["avance_real"]
+                                        < 100
+                                    ).sum()
+                                )
+                            })
+                        )
+                        .reset_index()
+                    )
+
+                    especialidad[
+                        "especialidad"
+                    ] = (
+                        especialidad[
+                            "especialidad"
+                        ]
+                        .fillna("SIN ESPECIALIDAD")
+                    )
+
+                    especialidad = (
+                        especialidad
+                        .sort_values(
+                            "Avance",
+                            ascending=True
+                        )
+                    )
+
+                    fig_esp = px.bar(
+                        especialidad,
+                        x="Avance",
+                        y="especialidad",
+                        orientation="h",
+                        text="Avance"
+                    )
+
+                    fig_esp.update_traces(
+                        texttemplate="%{text:.1f}%",
+                        textposition="outside"
+                    )
+
+                    fig_esp.update_layout(
+                        xaxis_title="Avance (%)",
+                        yaxis_title="",
+                        xaxis=dict(
+                            range=[0, 105]
+                        ),
+                        height=420
+                    )
+
+                    st.plotly_chart(
+                        fig_esp,
+                        use_container_width=True
+                    )
+
+            # =============================================
+            # 12. AVANCE POR SUPERVISOR
+            # =============================================
+
+            with c_sup:
+
+                st.subheader(
+                    "Avance por supervisor"
+                )
+
+                if "supervisor" in df_estado.columns:
+
+                    supervisor = (
+                        df_estado
+                        .groupby(
+                            "supervisor",
+                            dropna=False
+                        )
+                        .apply(
+                            lambda grupo: pd.Series({
+                                "Avance": weighted_progress(
+                                    grupo
+                                ),
+                                "Actividades": len(grupo),
+                                "Pendientes": int(
+                                    (
+                                        grupo["avance_real"]
+                                        < 100
+                                    ).sum()
+                                )
+                            })
+                        )
+                        .reset_index()
+                    )
+
+                    supervisor[
+                        "supervisor"
+                    ] = (
+                        supervisor[
+                            "supervisor"
+                        ]
+                        .fillna("SIN SUPERVISOR")
+                    )
+
+                    supervisor = (
+                        supervisor
+                        .sort_values(
+                            "Avance",
+                            ascending=True
+                        )
+                    )
+
+                    fig_sup = px.bar(
+                        supervisor,
+                        x="Avance",
+                        y="supervisor",
+                        orientation="h",
+                        text="Avance"
+                    )
+
+                    fig_sup.update_traces(
+                        texttemplate="%{text:.1f}%",
+                        textposition="outside"
+                    )
+
+                    fig_sup.update_layout(
+                        xaxis_title="Avance (%)",
+                        yaxis_title="",
+                        xaxis=dict(
+                            range=[0, 105]
+                        ),
+                        height=420
+                    )
+
+                    st.plotly_chart(
+                        fig_sup,
+                        use_container_width=True
+                    )
+
+            st.divider()
+
+            # =============================================
+            # 13. FILTROS DE DETALLE
+            # =============================================
+
+            st.subheader(
+                "Detalle de planificación y avance"
+            )
+
+            f1, f2, f3 = st.columns(3)
+
+            lista_ots = ["TODAS"]
+
+            if "ot" in df_estado.columns:
+                lista_ots += sorted(
+                    df_estado["ot"]
+                    .dropna()
+                    .astype(str)
+                    .unique()
+                    .tolist()
+                )
+
+            with f1:
+
+                filtro_ot = st.selectbox(
+                    "Filtrar por OT",
+                    lista_ots,
+                    key="dash_filtro_ot"
+                )
+
+            lista_especialidades = ["TODAS"]
+
+            if "especialidad" in df_estado.columns:
+                lista_especialidades += sorted(
+                    df_estado["especialidad"]
+                    .dropna()
+                    .astype(str)
+                    .unique()
+                    .tolist()
+                )
+
+            with f2:
+
+                filtro_especialidad = st.selectbox(
+                    "Filtrar por especialidad",
+                    lista_especialidades,
+                    key="dash_filtro_especialidad"
+                )
+
+            with f3:
+
+                filtro_estado = st.selectbox(
+                    "Estado",
+                    [
+                        "TODOS",
+                        "CULMINADAS",
+                        "EN EJECUCIÓN",
+                        "NO INICIADAS",
+                        "PENDIENTES"
+                    ],
+                    key="dash_filtro_estado"
+                )
+
+            detalle = df_estado.copy()
+
+            if filtro_ot != "TODAS":
+
+                detalle = detalle[
+                    detalle["ot"].astype(str)
+                    == filtro_ot
+                ]
+
+            if filtro_especialidad != "TODAS":
+
+                detalle = detalle[
+                    detalle[
+                        "especialidad"
+                    ].astype(str)
+                    == filtro_especialidad
+                ]
+
+            if filtro_estado == "CULMINADAS":
+
+                detalle = detalle[
+                    detalle["avance_real"] >= 100
+                ]
+
+            elif filtro_estado == "EN EJECUCIÓN":
+
+                detalle = detalle[
+                    (
+                        detalle["avance_real"] > 0
+                    )
+                    & (
+                        detalle["avance_real"] < 100
+                    )
+                ]
+
+            elif filtro_estado == "NO INICIADAS":
+
+                detalle = detalle[
+                    detalle["avance_real"] <= 0
+                ]
+
+            elif filtro_estado == "PENDIENTES":
+
+                detalle = detalle[
+                    detalle["avance_real"] < 100
+                ]
+
+            # =============================================
+            # 14. ESTADO TEXTUAL
+            # =============================================
+
+            detalle["estado"] = np.where(
+                detalle["avance_real"] >= 100,
+                "CULMINADA",
+                np.where(
+                    detalle["avance_real"] > 0,
+                    "EN EJECUCIÓN",
+                    "NO INICIADA"
+                )
+            )
+
+            columnas_tabla = [
+                "ot",
+                "equipo",
+                "codigo_actividad",
+                "descripcion",
+                "especialidad",
+                "supervisor",
+                "grupo",
+                "inicio_plan",
+                "fin_plan",
+                "hh_plan",
+                "avance_real",
+                "estado"
+            ]
+
+            columnas_tabla = [
+                columna
+                for columna in columnas_tabla
+                if columna in detalle.columns
+            ]
+
+            tabla = detalle[
+                columnas_tabla
+            ].copy()
+
+            tabla = tabla.rename(
+                columns={
+                    "ot": "OT",
+                    "equipo": "EQUIPO",
+                    "codigo_actividad": "ACTIVIDAD",
+                    "descripcion": "DESCRIPCIÓN",
+                    "especialidad": "ESPECIALIDAD",
+                    "supervisor": "SUPERVISOR",
+                    "grupo": "GRUPO",
+                    "inicio_plan": "INICIO PLAN",
+                    "fin_plan": "FIN PLAN",
+                    "hh_plan": "HH PLAN",
+                    "avance_real": "AVANCE REAL (%)",
+                    "estado": "ESTADO"
+                }
+            )
+
+            st.dataframe(
+                tabla,
+                use_container_width=True,
+                hide_index=True,
+                height=500
+            )
+
+            # =============================================
+            # 15. RESUMEN FINAL
+            # =============================================
+
+            st.caption(
+                f"Mostrando {len(tabla)} actividades · "
+                f"{int(kpis.get('culminadas', 0))} culminadas · "
+                f"{int(kpis.get('parciales', 0))} en ejecución · "
+                f"{int(kpis.get('no_iniciadas', 0))} no iniciadas."
             )    
     
     # =====================================================
