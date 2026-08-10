@@ -44,6 +44,51 @@ AREAS = [
     "RELAVES"
 ]
 
+# =====================================================
+# FUNCIONES DE IMPORTACIÓN
+# =====================================================
+
+def limpiar_texto(valor):
+    if pd.isna(valor):
+        return None
+
+    texto = str(valor).strip()
+
+    if texto == "":
+        return None
+
+    return texto
+
+
+def limpiar_numero(valor, default=None):
+    if pd.isna(valor):
+        return default
+
+    try:
+        return float(valor)
+    except Exception:
+        return default
+
+
+def limpiar_entero(valor, default=None):
+    if pd.isna(valor):
+        return default
+
+    try:
+        return int(float(valor))
+    except Exception:
+        return default
+
+
+def limpiar_fecha(valor):
+    if pd.isna(valor):
+        return None
+
+    try:
+        fecha = pd.to_datetime(valor)
+        return fecha.strftime("%Y-%m-%dT%H:%M:%S")
+    except Exception:
+        return None
 
 # =====================================================
 # INTERFAZ DE PRUEBA
