@@ -217,7 +217,11 @@ def compute_kpis(
             "hh_ganadas": 0.0
         }
 
-    avance_general = weighted_progress(status)
+    # REAL general con la misma metodología de la Curva S original:
+    # promedio simple del último avance de TODAS las actividades.
+    avance_general = float(
+        status["avance_real"].mean()
+    ) if not status.empty else 0.0
 
     culminadas = int(
         (status["avance_real"] >= 100).sum()
@@ -261,34 +265,44 @@ def compute_kpis(
         ).sum()
     )
 
+    # =====================================================
+    # PLAN ACTUAL
+    # Misma metodología de la Curva S:
+    # promedio simple del avance esperado de todas
+    # las actividades según la fecha/hora actual.
+    # =====================================================
+
     inicio = pd.to_datetime(
-        status.get("inicio_plan"),
+        status["inicio_plan"],
         errors="coerce"
     )
 
     fin = pd.to_datetime(
-        status.get("fin_plan"),
+        status["fin_plan"],
         errors="coerce"
     )
 
     ahora = pd.Timestamp.now()
 
-    avance_plan = []
+    avances_plan_actual = []
 
-    for fecha_inicio, fecha_fin in zip(
-        inicio,
-        fin
-    ):
+    for fecha_inicio, fecha_fin in zip(inicio, fin):
 
         if pd.isna(fecha_inicio) or pd.isna(fecha_fin):
-            avance_plan.append(0)
+            avances_plan_actual.append(0.0)
             continue
 
+        if fecha_fin <= fecha_inicio:
+            fecha_fin = (
+                fecha_inicio
+                + pd.Timedelta(minutes=1)
+            )
+
         if ahora <= fecha_inicio:
-            avance_plan.append(0)
+            avance_plan_actividad = 0.0
 
         elif ahora >= fecha_fin:
-            avance_plan.append(100)
+            avance_plan_actividad = 100.0
 
         else:
             duracion = (
@@ -299,37 +313,38 @@ def compute_kpis(
                 ahora - fecha_inicio
             ).total_seconds()
 
-            porcentaje = (
-                transcurrido / duracion * 100
+            avance_plan_actividad = (
+                transcurrido
+                / duracion
+                * 100.0
                 if duracion > 0
-                else 100
+                else 100.0
             )
 
-            avance_plan.append(
-                max(0, min(100, porcentaje))
+        avances_plan_actual.append(
+            max(
+                0.0,
+                min(
+                    100.0,
+                    avance_plan_actividad
+                )
             )
-
-    status["avance_plan"] = avance_plan
-
-    peso_total = status["peso"].sum()
-
-    if peso_total > 0:
-        plan_actual = float(
-            (
-                status["avance_plan"]
-                * status["peso"]
-            ).sum()
-            / peso_total
         )
-    else:
-        plan_actual = 0.0
+
+    plan_actual = (
+        float(
+            sum(avances_plan_actual)
+            / len(avances_plan_actual)
+        )
+        if avances_plan_actual
+        else 0.0
+    )
 
     spi = (
         avance_general / plan_actual
         if plan_actual > 0
         else 0.0
     )
-
     return {
         "avance_general": avance_general,
         "avance_plan": plan_actual,
