@@ -1324,11 +1324,100 @@ def construir_secciones_informe_diario(
     observaciones = []
 
     if not diarios.empty and "observaciones" in diarios.columns:
-        observaciones = [
-            str(valor).strip()
-            for valor in diarios["observaciones"].fillna("")
-            if str(valor).strip()
-        ]
+
+        actividad_lookup_obs = (
+            actividades.set_index("id")
+            if not actividades.empty
+            else pd.DataFrame()
+        )
+
+        ot_lookup_obs = (
+            ots.set_index("id")
+            if not ots.empty
+            else pd.DataFrame()
+        )
+
+        for _, registro_obs in diarios.iterrows():
+
+            observacion = str(
+                registro_obs.get(
+                    "observaciones",
+                    ""
+                )
+                or ""
+            ).strip()
+
+            if not observacion:
+                continue
+
+            actividad_id_obs = registro_obs.get(
+                "actividad_id"
+            )
+
+            codigo_obs = ""
+            descripcion_obs = ""
+            ot_numero_obs = ""
+            equipo_obs = ""
+
+            if (
+                not actividad_lookup_obs.empty
+                and actividad_id_obs
+                in actividad_lookup_obs.index
+            ):
+
+                actividad_obs = (
+                    actividad_lookup_obs.loc[
+                        actividad_id_obs
+                    ]
+                )
+
+                codigo_obs = str(
+                    actividad_obs.get(
+                        "codigo_actividad",
+                        ""
+                    )
+                )
+
+                descripcion_obs = str(
+                    actividad_obs.get(
+                        "descripcion",
+                        ""
+                    )
+                )
+
+                ot_id_obs = actividad_obs.get(
+                    "ot_id"
+                )
+
+                if (
+                    not ot_lookup_obs.empty
+                    and ot_id_obs
+                    in ot_lookup_obs.index
+                ):
+
+                    ot_obs = ot_lookup_obs.loc[
+                        ot_id_obs
+                    ]
+
+                    ot_numero_obs = str(
+                        ot_obs.get(
+                            "ot",
+                            ""
+                        )
+                    )
+
+                    equipo_obs = str(
+                        ot_obs.get(
+                            "equipo",
+                            ""
+                        )
+                    )
+
+            observaciones.append(
+                f"OT {ot_numero_obs} | "
+                f"{descripcion_obs} | "
+                f"{observacion}"
+            )
 
     if not observaciones:
         observaciones = [
