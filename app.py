@@ -3328,30 +3328,102 @@ if rol == "admin":
                         )
                     )
 
-                    figura_curva_admin = px.line(
-                        curva_admin_long,
-                        x="fecha",
-                        y="Avance",
-                        color="Curva",
-                        markers=True,
-                        labels={
-                            "fecha": "Fecha / hora",
-                            "Avance": "Acumulado (%)"
-                        }
-                    )
+                    figura_curva_admin = go.Figure()
 
-                    figura_curva_admin.update_yaxes(
-                        range=[0, 100]
-                    )
+                    for nombre_curva, posicion_texto in [
+                        ("PLAN", "top center"),
+                        ("REAL", "bottom center")
+                    ]:
+
+                        datos_curva_admin = (
+                            curva_admin_long[
+                                curva_admin_long["Curva"]
+                                == nombre_curva
+                            ]
+                            .copy()
+                        )
+
+                        etiquetas_admin = [
+                            f"{float(valor):.1f}%"
+                            if pd.notna(valor)
+                            else ""
+                            for valor in datos_curva_admin[
+                                "Avance"
+                            ]
+                        ]
+
+                        figura_curva_admin.add_trace(
+                            go.Scatter(
+                                x=datos_curva_admin["fecha"],
+                                y=datos_curva_admin["Avance"],
+                                mode="lines+markers+text",
+                                name=nombre_curva,
+                                text=etiquetas_admin,
+                                textposition=posicion_texto,
+                                textfont=dict(
+                                    size=10
+                                ),
+                                line=dict(
+                                    width=4,
+                                    shape="spline",
+                                    smoothing=1.05
+                                ),
+                                marker=dict(
+                                    size=7,
+                                    line=dict(
+                                        width=1
+                                    )
+                                ),
+                                connectgaps=False,
+                                hovertemplate=(
+                                    f"<b>{nombre_curva}</b><br>"
+                                    "%{x|%d/%m/%Y %H:%M}<br>"
+                                    "Avance: %{y:.1f}%"
+                                    "<extra></extra>"
+                                )
+                            )
+                        )
 
                     figura_curva_admin.update_layout(
-                        height=470,
-                        hovermode="x unified"
+                        height=520,
+                        hovermode="x unified",
+                        xaxis=dict(
+                            title="Fecha / hora",
+                            tickformat="%d/%m\n%H:%M",
+                            showgrid=True,
+                            gridwidth=1
+                        ),
+                        yaxis=dict(
+                            title="Acumulado (%)",
+                            range=[0, 108],
+                            dtick=20,
+                            ticksuffix="%",
+                            showgrid=True,
+                            gridwidth=1,
+                            zeroline=False
+                        ),
+                        legend=dict(
+                            orientation="h",
+                            yanchor="bottom",
+                            y=1.04,
+                            xanchor="center",
+                            x=0.5
+                        ),
+                        margin=dict(
+                            l=50,
+                            r=35,
+                            t=60,
+                            b=55
+                        )
                     )
 
                     st.plotly_chart(
                         figura_curva_admin,
-                        use_container_width=True
+                        use_container_width=True,
+                        config={
+                            "displaylogo": False,
+                            "responsive": True
+                        }
                     )
 
                 st.divider()
@@ -6663,22 +6735,83 @@ else:
 
                 fig_s = go.Figure()
 
+                # Etiquetas de porcentaje por cada punto.
+                texto_plan = [
+                    f"{float(valor):.1f}%"
+                    if pd.notna(valor)
+                    else ""
+                    for valor in curva_s["PLAN"]
+                ]
+
+                texto_real = [
+                    f"{float(valor):.1f}%"
+                    if pd.notna(valor)
+                    else ""
+                    for valor in curva_s["REAL"]
+                ]
+
+                # PLAN
                 fig_s.add_trace(
                     go.Scatter(
                         x=curva_s["fecha"],
                         y=curva_s["PLAN"],
-                        mode="lines+markers",
-                        name="PLAN"
+                        mode="lines+markers+text",
+                        name="PLAN",
+                        text=texto_plan,
+                        textposition="top center",
+                        textfont=dict(
+                            size=11
+                        ),
+                        line=dict(
+                            width=4,
+                            shape="spline",
+                            smoothing=1.05
+                        ),
+                        marker=dict(
+                            size=8,
+                            line=dict(
+                                width=1
+                            )
+                        ),
+                        hovertemplate=(
+                            "<b>PLAN</b><br>"
+                            "%{x|%d/%m/%Y %H:%M}<br>"
+                            "Avance: %{y:.1f}%"
+                            "<extra></extra>"
+                        )
                     )
                 )
 
+                # REAL
                 fig_s.add_trace(
                     go.Scatter(
                         x=curva_s["fecha"],
                         y=curva_s["REAL"],
-                        mode="lines+markers",
+                        mode="lines+markers+text",
                         name="REAL",
-                        connectgaps=False
+                        text=texto_real,
+                        textposition="bottom center",
+                        textfont=dict(
+                            size=11
+                        ),
+                        line=dict(
+                            width=4,
+                            shape="spline",
+                            smoothing=1.05
+                        ),
+                        marker=dict(
+                            size=8,
+                            line=dict(
+                                width=1
+                            )
+                        ),
+                        connectgaps=False,
+                        hovertemplate=(
+                            "<b>REAL</b><br>"
+                            "%{x|%d/%m/%Y %H:%M}<br>"
+                            "Avance: %{y:.1f}%"
+                            "<extra></extra>"
+                        )
                     )
                 )
 
@@ -6686,20 +6819,42 @@ else:
                     xaxis_title="Fecha / Hora",
                     yaxis_title="Avance acumulado (%)",
                     yaxis=dict(
-                        range=[0, 105]
+                        range=[0, 108],
+                        ticksuffix="%",
+                        dtick=20,
+                        showgrid=True,
+                        gridwidth=1,
+                        zeroline=False
+                    ),
+                    xaxis=dict(
+                        showgrid=True,
+                        gridwidth=1,
+                        tickformat="%d/%m\n%H:%M"
                     ),
                     hovermode="x unified",
-                    legend_title="Curva",
-                    height=500
-                )
-
-                fig_s.update_yaxes(
-                    ticksuffix="%"
+                    legend=dict(
+                        orientation="h",
+                        yanchor="bottom",
+                        y=1.04,
+                        xanchor="center",
+                        x=0.5
+                    ),
+                    margin=dict(
+                        l=50,
+                        r=35,
+                        t=65,
+                        b=55
+                    ),
+                    height=560
                 )
 
                 st.plotly_chart(
                     fig_s,
-                    use_container_width=True
+                    use_container_width=True,
+                    config={
+                        "displaylogo": False,
+                        "responsive": True
+                    }
                 )
 
             st.divider()
