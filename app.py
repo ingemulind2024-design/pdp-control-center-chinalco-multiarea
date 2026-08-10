@@ -1930,6 +1930,58 @@ def construir_pdf_ejecutivo_area(
     return buffer.getvalue()
 
 
+
+# =====================================================
+# PREPARAR DATAFRAME PARA EXCEL
+# =====================================================
+
+def preparar_dataframe_excel(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Convierte columnas no compatibles con Excel:
+    - timestamps con zona horaria -> timestamps sin zona horaria
+    - listas/diccionarios -> texto
+    """
+
+    salida = df.copy()
+
+    for columna in salida.columns:
+
+        serie = salida[columna]
+
+        # Datetime con timezone
+        if pd.api.types.is_datetime64tz_dtype(serie):
+            salida[columna] = serie.dt.tz_localize(None)
+            continue
+
+        # Datetime normal
+        if pd.api.types.is_datetime64_any_dtype(serie):
+            continue
+
+        # Objetos que pueden contener Timestamp con timezone,
+        # listas o diccionarios.
+        if serie.dtype == "object":
+
+            def limpiar_valor(valor):
+
+                if isinstance(valor, pd.Timestamp):
+
+                    if valor.tzinfo is not None:
+                        return valor.tz_localize(None)
+
+                    return valor
+
+                if isinstance(valor, (list, dict, tuple)):
+                    return str(valor)
+
+                return valor
+
+            salida[columna] = serie.map(
+                limpiar_valor
+            )
+
+    return salida
+
+
 # =====================================================
 # LOGIN Y CONTROL DE ACCESO
 # =====================================================
@@ -5269,30 +5321,48 @@ else:
 
                 buffer_reporte_excel = io.BytesIO()
 
+                # Excel no admite fechas con timezone.
+                # También limpiamos listas/diccionarios antes de exportar.
+                excel_ots = preparar_dataframe_excel(
+                    df_ots_reporte
+                )
+
+                excel_actividades = preparar_dataframe_excel(
+                    df_actividades_reporte
+                )
+
+                excel_avances = preparar_dataframe_excel(
+                    df_avances_reporte
+                )
+
+                excel_estado = preparar_dataframe_excel(
+                    estado_reporte
+                )
+
                 with pd.ExcelWriter(
                     buffer_reporte_excel,
                     engine="openpyxl"
                 ) as writer:
 
-                    df_ots_reporte.to_excel(
+                    excel_ots.to_excel(
                         writer,
                         index=False,
                         sheet_name="OTs"
                     )
 
-                    df_actividades_reporte.to_excel(
+                    excel_actividades.to_excel(
                         writer,
                         index=False,
                         sheet_name="Actividades"
                     )
 
-                    df_avances_reporte.to_excel(
+                    excel_avances.to_excel(
                         writer,
                         index=False,
                         sheet_name="Avances"
                     )
 
-                    estado_reporte.to_excel(
+                    excel_estado.to_excel(
                         writer,
                         index=False,
                         sheet_name="Estado_Actual"
