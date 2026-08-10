@@ -1536,92 +1536,89 @@ else:
                 kpis.get("hh_ganadas", 0)
             )
 
-# =========================================================
-# INDICADORES PRINCIPALES DEL DASHBOARD
-# =========================================================
+    # ========================================================= 
+    # INDICADORES PRINCIPALES DEL DASHBOARD
+    # =========================================================        
+    total_ots = len(ots_area)
+    total_actividades = kpis["actividades"]
 
-total_ots = len(ots_area)
-total_actividades = kpis["actividades"]
+    avance_general = kpis["avance_general"]
+    culminadas = kpis["culminadas"]
+    en_ejecucion = kpis["parciales"]
+    no_iniciadas = kpis["no_iniciadas"]
 
-avance_general = kpis["avance_general"]
-culminadas = kpis["culminadas"]
-en_ejecucion = kpis["parciales"]
-no_iniciadas = kpis["no_iniciadas"]
+    spi = kpis["spi"]
+    hh_plan = kpis["hh_plan"]
+    hh_ganadas = kpis["hh_ganadas"] 
 
-spi = kpis["spi"]
-hh_plan = kpis["hh_plan"]
-hh_ganadas = kpis["hh_ganadas"]
+    # =========================================================
+    # FILA 1
+    # =========================================================
 
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
 
-# =========================================================
-# FILA 1
-# =========================================================
+    with c1:
+        st.metric(
+            "OTs",
+            total_ots
+        )
 
-c1, c2, c3, c4, c5, c6 = st.columns(6)
+    with c2:
+        st.metric(
+            "Actividades",
+            total_actividades
+        )
 
-with c1:
-    st.metric(
-        "OTs",
-        total_ots
-    )
+    with c3:
+        st.metric(
+            "Avance general",
+            f"{avance_general:.1f}%"
+        )    
 
-with c2:
-    st.metric(
-        "Actividades",
-        total_actividades
-    )
+    with c4:
+        st.metric(
+            "Culminadas",
+            culminadas
+        )      
 
-with c3:
-    st.metric(
-        "Avance general",
-        f"{avance_general:.1f}%"
-    )
+    with c5:
+        st.metric(
+            "En ejecución",
+            en_ejecucion
+        )  
 
-with c4:
-    st.metric(
-        "Culminadas",
-        culminadas
-    )
+    with c6:
+        st.metric(
+            "No iniciadas",
+            no_iniciadas
+        )    
 
-with c5:
-    st.metric(
-        "En ejecución",
-        en_ejecucion
-    )
+    # =========================================================
+    # FILA 2
+    # =========================================================   
 
-with c6:
-    st.metric(
-        "No iniciadas",
-        no_iniciadas
-    )
+    c7, c8, c9 = st.columns(3)
 
+    with c7:
+        st.metric(
+            "SPI",
+            f"{spi:.2f}",
+            help="SPI = Avance Real / Avance Plan"
+        )
 
-# =========================================================
-# FILA 2
-# =========================================================
+    with c8:
+        st.metric(
+            "HH planificadas",
+            f"{hh_plan:.0f}"
+        ) 
 
-c7, c8, c9 = st.columns(3)
+    with c9:
+        st.metric(
+            "HH ganadas",
+            f"{hh_ganadas:.0f}"
+        )
 
-with c7:
-    st.metric(
-        "SPI",
-        f"{spi:.2f}",
-        help="SPI = Avance Real / Avance Plan"
-    )
-
-with c8:
-    st.metric(
-        "HH planificadas",
-        f"{hh_plan:.0f}"
-    )
-
-with c9:
-    st.metric(
-        "HH ganadas",
-        f"{hh_ganadas:.0f}"
-    )
-
-st.divider()
+    st.divider()    
 
             # =============================================
             # 7. SEMÁFORO DEL PROYECTO
