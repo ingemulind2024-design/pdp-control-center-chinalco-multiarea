@@ -377,6 +377,358 @@ if rol == "admin":
                         hide_index=True
                     )
 
+                                        st.divider()
+
+                    confirmar = st.checkbox(
+                        f"Confirmo que deseo reemplazar la planificación de "
+                        f"{area_seleccionada['nombre']}."
+                    )
+
+                    texto_confirmacion = st.text_input(
+                        "Para confirmar escriba exactamente: REEMPLAZAR"
+                    )
+
+                    puede_importar = (
+                        confirmar
+                        and texto_confirmacion.strip().upper() == "REEMPLAZAR"
+                    )
+
+                    if st.button(
+                        "REEMPLAZAR PLANIFICACIÓN DEL ÁREA",
+                        type="primary",
+                        use_container_width=True,
+                        disabled=not puede_importar
+                    ):
+
+                        try:
+
+                            area_id = area_seleccionada["id"]
+
+                            progreso = st.progress(
+                                5,
+                                text="Preparando información..."
+                            )
+
+                            # ==========================================
+                            # VALIDAR COLUMNAS
+                            # ==========================================
+
+                            columnas_ots = {
+                                "ot",
+                                "equipo",
+                                "descripcion"
+                            }
+
+                            columnas_actividades = {
+                                "ot",
+                                "codigo_actividad",
+                                "descripcion",
+                                "supervisor",
+                                "especialidad",
+                                "grupo",
+                                "peso",
+                                "inicio_plan",
+                                "fin_plan",
+                                "seccion",
+                                "personal",
+                                "duracion_h",
+                                "hh_plan"
+                            }
+
+                            faltantes_ots = (
+                                columnas_ots - set(df_ots.columns)
+                            )
+
+                            faltantes_act = (
+                                columnas_actividades
+                                - set(df_actividades.columns)
+                            )
+
+                            if faltantes_ots:
+                                raise ValueError(
+                                    "Faltan columnas en OTs: "
+                                    + ", ".join(sorted(faltantes_ots))
+                                )
+
+                            if faltantes_act:
+                                raise ValueError(
+                                    "Faltan columnas en Actividades: "
+                                    + ", ".join(sorted(faltantes_act))
+                                )
+
+                            progreso.progress(
+                                15,
+                                text="Limpiando OTs..."
+                            )
+
+                            # ==========================================
+                            # PREPARAR OTs
+                            # ==========================================
+
+                            ots_limpias = []
+
+                            for _, row in df_ots.iterrows():
+
+                                ot = limpiar_texto(row.get("ot"))
+
+                                if not ot:
+                                    continue
+
+                                ots_limpias.append({
+                                    "ot": ot,
+                                    "area_id": area_id,
+                                    "equipo": limpiar_texto(
+                                        row.get("equipo")
+                                    ),
+                                    "descripcion": limpiar_texto(
+                                        row.get("descripcion")
+                                    ),
+                                    "activo": True
+                                })
+
+                            if not ots_limpias:
+                                raise ValueError(
+                                    "No existen OTs válidas para importar."
+                                )
+
+                            # ==========================================
+                            # BUSCAR INFORMACIÓN EXISTENTE DEL ÁREA
+                            # ==========================================
+
+                            progreso.progress(
+                                25,
+                                text="Revisando planificación anterior..."
+                            )
+
+                            ots_actuales = (
+                                supabase_admin
+                                .table("ots")
+                                .select("id")
+                                .eq("area_id", area_id)
+                                .execute()
+                            ).data or []
+
+                            ot_ids = [
+                                x["id"]
+                                for x in ots_actuales
+                            ]
+
+                            # ==========================================
+                            # ELIMINAR AVANCES Y ACTIVIDADES ANTERIORES
+                            # ==========================================
+
+                            if ot_ids:
+
+                                actividades_actuales = (
+                                    supabase_admin
+                                    .table("actividades")
+                                    .select("id,ot_id")
+                                    .in_("ot_id", ot_ids)
+                                    .execute()
+                                ).data or []
+
+                                actividad_ids = [
+                                    x["id"]
+                                    for x in actividades_actuales
+                                ]
+
+                                if actividad_ids:
+
+                                    supabase_admin.table(
+                                        "avances_actividad"
+                                    ).delete().in_(
+                                        "actividad_id",
+                                        actividad_ids
+                                    ).execute()
+
+                                    supabase_admin.table(
+                                        "actividades"
+                                    ).delete().in_(
+                                        "id",
+                                        actividad_ids
+                                    ).execute()
+
+                                progreso.progress(
+                                    40,
+                                    text="Eliminando OTs anteriores..."
+                                )
+
+                                supabase_admin.table(
+                                    "ots"
+                                ).delete().eq(
+                                    "area_id",
+                                    area_id
+                                ).execute()
+
+                            # ==========================================
+                            # INSERTAR NUEVAS OTs
+                            # ==========================================
+
+                            progreso.progress(
+                                55,
+                                text="Cargando nuevas OTs..."
+                            )
+
+                            (
+                                supabase_admin
+                                .table("ots")
+                                .insert(ots_limpias)
+                                .execute()
+                            )
+
+                            # ==========================================
+                            # RECUPERAR IDs DE LAS NUEVAS OTs
+                            # ==========================================
+
+                            ots_nuevas = (
+                                supabase_admin
+                                .table("ots")
+                                .select("id,ot")
+                                .eq("area_id", area_id)
+                                .execute()
+                            ).data or []
+
+                            mapa_ots = {
+                                str(x["ot"]): x["id"]
+                                for x in ots_nuevas
+                            }
+
+                            progreso.progress(
+                                65,
+                                text="Preparando actividades..."
+                            )
+
+                            # ==========================================
+                            # PREPARAR ACTIVIDADES
+                            # ==========================================
+
+                            actividades_limpias = []
+                            ots_no_encontradas = []
+
+                            for _, row in df_actividades.iterrows():
+
+                                ot = limpiar_texto(
+                                    row.get("ot")
+                                )
+
+                                codigo = limpiar_texto(
+                                    row.get("codigo_actividad")
+                                )
+
+                                descripcion = limpiar_texto(
+                                    row.get("descripcion")
+                                )
+
+                                if not ot or not codigo or not descripcion:
+                                    continue
+
+                                if ot not in mapa_ots:
+                                    ots_no_encontradas.append(ot)
+                                    continue
+
+                                actividades_limpias.append({
+                                    "ot_id": mapa_ots[ot],
+                                    "codigo_actividad": codigo,
+                                    "descripcion": descripcion,
+                                    "supervisor": limpiar_texto(
+                                        row.get("supervisor")
+                                    ),
+                                    "especialidad": limpiar_texto(
+                                        row.get("especialidad")
+                                    ),
+                                    "grupo": limpiar_texto(
+                                        row.get("grupo")
+                                    ),
+                                    "peso": limpiar_numero(
+                                        row.get("peso"),
+                                        1
+                                    ),
+                                    "inicio_plan": limpiar_fecha(
+                                        row.get("inicio_plan")
+                                    ),
+                                    "fin_plan": limpiar_fecha(
+                                        row.get("fin_plan")
+                                    ),
+                                    "seccion": limpiar_texto(
+                                        row.get("seccion")
+                                    ),
+                                    "personal": limpiar_entero(
+                                        row.get("personal")
+                                    ),
+                                    "duracion_h": limpiar_numero(
+                                        row.get("duracion_h")
+                                    ),
+                                    "hh_plan": limpiar_numero(
+                                        row.get("hh_plan")
+                                    ),
+                                    "critica": False,
+                                    "activo": True
+                                })
+
+                            if ots_no_encontradas:
+                                raise ValueError(
+                                    "Estas OTs aparecen en Actividades "
+                                    "pero no en la hoja OTs: "
+                                    + ", ".join(
+                                        sorted(set(ots_no_encontradas))
+                                    )
+                                )
+
+                            if not actividades_limpias:
+                                raise ValueError(
+                                    "No existen actividades válidas."
+                                )
+
+                            # ==========================================
+                            # INSERTAR ACTIVIDADES
+                            # ==========================================
+
+                            progreso.progress(
+                                80,
+                                text="Cargando actividades..."
+                            )
+
+                            batch_size = 200
+
+                            for inicio in range(
+                                0,
+                                len(actividades_limpias),
+                                batch_size
+                            ):
+
+                                lote = actividades_limpias[
+                                    inicio:inicio + batch_size
+                                ]
+
+                                (
+                                    supabase_admin
+                                    .table("actividades")
+                                    .insert(lote)
+                                    .execute()
+                                )
+
+                            progreso.progress(
+                                100,
+                                text="Importación completada."
+                            )
+
+                            st.success(
+                                f"Planificación de "
+                                f"{area_seleccionada['nombre']} "
+                                f"actualizada correctamente: "
+                                f"{len(ots_limpias)} OTs y "
+                                f"{len(actividades_limpias)} actividades."
+                            )
+
+                            st.balloons()
+
+                        except Exception as import_error:
+
+                            st.error(
+                                "No fue posible importar la planificación: "
+                                f"{import_error}"
+                            )
+
                     st.write("Vista previa de actividades")
 
                     st.dataframe(
