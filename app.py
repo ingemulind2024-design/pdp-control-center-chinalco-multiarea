@@ -136,7 +136,7 @@ if st.session_state["usuario_logueado"] is None:
         "Sistema integrado de seguimiento y control de la Parada de Planta"
     )
 
-    st.divider()
+st.divider()
 
     st.subheader("Acceso al sistema")
 
