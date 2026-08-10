@@ -1,4 +1,6 @@
 import streamlit as st
+import pandas as pd
+from datetime import datetime
 from supabase import create_client
 
 st.set_page_config(
@@ -19,7 +21,16 @@ def conectar_supabase():
     return create_client(url, key)
 
 
+@st.cache_resource
+def conectar_supabase_admin():
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_ADMIN_KEY"]
+
+    return create_client(url, key)
+
+
 supabase = conectar_supabase()
+supabase_admin = conectar_supabase_admin()
 
 
 # =====================================================
