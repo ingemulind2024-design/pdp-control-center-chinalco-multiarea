@@ -3170,11 +3170,17 @@ if rol == "admin":
 
                     def clasificar_alerta_admin(fila):
                         """
-                        Criterio ejecutivo:
-                        - Se prioriza vencimiento e inicio atrasado.
-                        - Actividades críticas usan umbrales más exigentes.
-                        - Los colores se reservan solo para situaciones
-                          que requieren atención.
+                        Semaforización PDP:
+                        - Verde: desviación >= -5 pp
+                        - Amarillo: entre -5 y -10 pp
+                        - Naranja: entre -10 y -20 pp
+                        - Rojo: desviación < -20 pp
+                        - Vencida: fin_plan < ahora y avance < 100%
+
+                        Actividades críticas:
+                        - Verde: desviación >= -5 pp
+                        - Naranja: entre -5 y -10 pp
+                        - Rojo: desviación < -10 pp
                         """
 
                         real = float(
@@ -3200,14 +3206,38 @@ if rol == "admin":
 
                         if real >= 100:
                             return {
-                                "nivel": "EN LÍNEA",
+                                "semaforo": "🟢",
+                                "nivel": "VERDE",
                                 "alerta": "Culminada",
                                 "accion": "Sin acción requerida",
                                 "prioridad": 90
                             }
 
                         # -------------------------------------
-                        # 2. AÚN NO DEBE INICIAR
+                        # 2. ACTIVIDAD VENCIDA
+                        # -------------------------------------
+
+                        if (
+                            pd.notna(fin)
+                            and ahora_admin > pd.Timestamp(fin)
+                            and real < 100
+                        ):
+                            return {
+                                "semaforo": "🔴",
+                                "nivel": "ROJO",
+                                "alerta": (
+                                    "Crítica vencida"
+                                    if critica
+                                    else "Vencida"
+                                ),
+                                "accion": (
+                                    "Escalar y definir recuperación inmediata"
+                                ),
+                                "prioridad": 1 if critica else 2
+                            }
+
+                        # -------------------------------------
+                        # 3. AÚN NO DEBE INICIAR
                         # -------------------------------------
 
                         if (
@@ -3215,6 +3245,7 @@ if rol == "admin":
                             and ahora_admin < pd.Timestamp(inicio)
                         ):
                             return {
+                                "semaforo": "⚪",
                                 "nivel": "PROGRAMADA",
                                 "alerta": (
                                     "Crítica por iniciar"
@@ -3230,113 +3261,15 @@ if rol == "admin":
                             }
 
                         # -------------------------------------
-                        # 3. FIN PLAN VENCIDO
-                        # -------------------------------------
-
-                        if (
-                            pd.notna(fin)
-                            and ahora_admin > pd.Timestamp(fin)
-                            and real < 100
-                        ):
-                            return {
-                                "nivel": "INTERVENCIÓN",
-                                "alerta": (
-                                    "Crítica vencida"
-                                    if critica
-                                    else "Actividad vencida"
-                                ),
-                                "accion": (
-                                    "Escalar y definir recuperación inmediata"
-                                ),
-                                "prioridad": 1 if critica else 2
-                            }
-
-                        # -------------------------------------
-                        # 4. ACTIVIDAD QUE DEBÍA INICIAR Y SIGUE 0%
-                        # -------------------------------------
-
-                        if (
-                            real <= 0
-                            and pd.notna(inicio)
-                            and ahora_admin >= pd.Timestamp(inicio)
-                        ):
-
-                            atraso_inicio_h = (
-                                ahora_admin
-                                - pd.Timestamp(inicio)
-                            ).total_seconds() / 3600
-
-                            if critica:
-
-                                if atraso_inicio_h >= 1:
-                                    return {
-                                        "nivel": "INTERVENCIÓN",
-                                        "alerta": "Crítica no iniciada",
-                                        "accion": (
-                                            "Escalar y liberar restricción de inmediato"
-                                        ),
-                                        "prioridad": 3
-                                    }
-
-                                if atraso_inicio_h >= 0.5:
-                                    return {
-                                        "nivel": "RECUPERACIÓN",
-                                        "alerta": "Inicio crítico atrasado",
-                                        "accion": (
-                                            "Asegurar inicio en los próximos 30 min"
-                                        ),
-                                        "prioridad": 5
-                                    }
-
-                                return {
-                                    "nivel": "SEGUIMIENTO",
-                                    "alerta": "Crítica pendiente de inicio",
-                                    "accion": (
-                                        "Confirmar inicio con supervisor"
-                                    ),
-                                    "prioridad": 8
-                                }
-
-                            else:
-
-                                if atraso_inicio_h >= 2:
-                                    return {
-                                        "nivel": "INTERVENCIÓN",
-                                        "alerta": "No iniciada > 2 h",
-                                        "accion": (
-                                            "Escalar y definir plan de recuperación"
-                                        ),
-                                        "prioridad": 4
-                                    }
-
-                                if atraso_inicio_h >= 1:
-                                    return {
-                                        "nivel": "RECUPERACIÓN",
-                                        "alerta": "Inicio atrasado",
-                                        "accion": (
-                                            "Recuperar en el siguiente corte"
-                                        ),
-                                        "prioridad": 6
-                                    }
-
-                                return {
-                                    "nivel": "SEGUIMIENTO",
-                                    "alerta": "Pendiente de inicio",
-                                    "accion": (
-                                        "Seguimiento del supervisor"
-                                    ),
-                                    "prioridad": 9
-                                }
-
-                        # -------------------------------------
-                        # 5. DESVIACIÓN PLAN VS REAL
+                        # 4. REGLA ESPECIAL: CRÍTICAS
                         # -------------------------------------
 
                         if critica:
 
                             if desviacion < -10:
                                 return {
-                                    "nivel": "INTERVENCIÓN",
+                                    "semaforo": "🔴",
+                                    "nivel": "ROJO",
                                     "alerta": "Crítica atrasada",
                                     "accion": (
                                         "Escalar y definir recuperación inmediata"
@@ -3346,51 +3279,65 @@ if rol == "admin":
 
                             if desviacion < -5:
                                 return {
-                                    "nivel": "RECUPERACIÓN",
+                                    "semaforo": "🟠",
+                                    "nivel": "NARANJA",
                                     "alerta": "Crítica en riesgo",
                                     "accion": (
-                                        "Reforzar recursos y recuperar en próximo corte"
+                                        "Aplicar plan de recuperación"
                                     ),
                                     "prioridad": 5
                                 }
 
                             return {
-                                "nivel": "EN LÍNEA",
-                                "alerta": "Crítica controlada",
-                                "accion": "Mantener seguimiento cercano",
+                                "semaforo": "🟢",
+                                "nivel": "VERDE",
+                                "alerta": "Crítica en línea",
+                                "accion": (
+                                    "Mantener seguimiento cercano"
+                                ),
                                 "prioridad": 30
                             }
 
+                        # -------------------------------------
+                        # 5. ACTIVIDAD NORMAL
+                        # -------------------------------------
+
                         if desviacion < -20:
                             return {
-                                "nivel": "INTERVENCIÓN",
+                                "semaforo": "🔴",
+                                "nivel": "ROJO",
                                 "alerta": "Atraso crítico",
                                 "accion": (
-                                    "Escalar y reprogramar recursos"
+                                    "Intervención inmediata / reprogramar recursos"
                                 ),
                                 "prioridad": 4
                             }
 
                         if desviacion < -10:
                             return {
-                                "nivel": "RECUPERACIÓN",
+                                "semaforo": "🟠",
+                                "nivel": "NARANJA",
                                 "alerta": "Atrasada",
                                 "accion": (
-                                    "Plan de recuperación para siguiente corte"
+                                    "Definir plan de recuperación"
                                 ),
                                 "prioridad": 6
                             }
 
                         if desviacion < -5:
                             return {
-                                "nivel": "SEGUIMIENTO",
+                                "semaforo": "🟡",
+                                "nivel": "AMARILLO",
                                 "alerta": "En riesgo",
-                                "accion": "Seguimiento del supervisor",
+                                "accion": (
+                                    "Seguimiento del supervisor"
+                                ),
                                 "prioridad": 10
                             }
 
                         return {
-                            "nivel": "EN LÍNEA",
+                            "semaforo": "🟢",
+                            "nivel": "VERDE",
                             "alerta": "En línea",
                             "accion": "Sin acción requerida",
                             "prioridad": 40
@@ -3406,7 +3353,13 @@ if rol == "admin":
                     )
 
                     detalle_operativo_admin[
-                        "NIVEL DE GESTIÓN"
+                        "SEMÁFORO"
+                    ] = clasificacion_admin.map(
+                        lambda item: item["semaforo"]
+                    )
+
+                    detalle_operativo_admin[
+                        "NIVEL"
                     ] = clasificacion_admin.map(
                         lambda item: item["nivel"]
                     )
@@ -3430,98 +3383,80 @@ if rol == "admin":
                     )
 
                     # -----------------------------------------
-                    # RESUMEN EJECUTIVO DE ALERTAS
+                    # RESUMEN EJECUTIVO DE SEMÁFOROS
                     # -----------------------------------------
 
-                    intervencion_admin = int(
+                    verdes_admin = int(
                         (
                             detalle_operativo_admin[
-                                "NIVEL DE GESTIÓN"
+                                "NIVEL"
                             ]
-                            == "INTERVENCIÓN"
+                            == "VERDE"
                         ).sum()
                     )
 
-                    recuperacion_admin = int(
+                    amarillos_admin = int(
                         (
                             detalle_operativo_admin[
-                                "NIVEL DE GESTIÓN"
+                                "NIVEL"
                             ]
-                            == "RECUPERACIÓN"
+                            == "AMARILLO"
                         ).sum()
                     )
 
-                    seguimiento_admin = int(
+                    naranjas_admin = int(
                         (
                             detalle_operativo_admin[
-                                "NIVEL DE GESTIÓN"
+                                "NIVEL"
                             ]
-                            == "SEGUIMIENTO"
+                            == "NARANJA"
                         ).sum()
                     )
 
-                    en_linea_admin = int(
-                        detalle_operativo_admin[
-                            "NIVEL DE GESTIÓN"
-                        ]
-                        .isin(
-                            [
-                                "EN LÍNEA",
-                                "PROGRAMADA"
+                    rojos_admin = int(
+                        (
+                            detalle_operativo_admin[
+                                "NIVEL"
                             ]
-                        )
-                        .sum()
+                            == "ROJO"
+                        ).sum()
                     )
 
-                    # Presentación gerencial: fondo neutro.
-                    # Solo los símbolos indican criticidad.
-                    al1, al2, al3, al4 = st.columns(4)
+                    sem1, sem2, sem3, sem4 = st.columns(4)
 
-                    with al1:
+                    with sem1:
                         st.metric(
-                            "● Intervención",
-                            intervencion_admin,
-                            help=(
-                                "Actividades que requieren "
-                                "escalamiento o decisión inmediata."
-                            )
+                            "🟢 En línea",
+                            verdes_admin
                         )
 
-                    with al2:
+                    with sem2:
                         st.metric(
-                            "● Recuperación",
-                            recuperacion_admin,
-                            help=(
-                                "Actividades que requieren "
-                                "plan de recuperación."
-                            )
+                            "🟡 En riesgo",
+                            amarillos_admin
                         )
 
-                    with al3:
+                    with sem3:
                         st.metric(
-                            "● Seguimiento",
-                            seguimiento_admin,
-                            help=(
-                                "Actividades que requieren "
-                                "control del supervisor."
-                            )
+                            "🟠 Recuperación",
+                            naranjas_admin
                         )
 
-                    with al4:
+                    with sem4:
                         st.metric(
-                            "En línea / Programadas",
-                            en_linea_admin
+                            "🔴 Intervención",
+                            rojos_admin
                         )
 
                     alertas_prioritarias_admin = (
                         detalle_operativo_admin[
                             detalle_operativo_admin[
-                                "NIVEL DE GESTIÓN"
+                                "NIVEL"
                             ].isin(
                                 [
-                                    "INTERVENCIÓN",
-                                    "RECUPERACIÓN",
-                                    "SEGUIMIENTO"
+                                    "ROJO",
+                                    "NARANJA",
+                                    "AMARILLO"
                                 ]
                             )
                         ]
@@ -3545,13 +3480,12 @@ if rol == "admin":
                         )
 
                         st.caption(
-                            "Ordenadas por prioridad de gestión. "
-                            "La gerencia puede enfocarse primero en "
-                            "Intervención, luego Recuperación y Seguimiento."
+                            "Prioridad automática según desviación "
+                            "PLAN vs REAL, criticidad y vencimiento."
                         )
 
                         columnas_alertas_admin = [
-                            "NIVEL DE GESTIÓN",
+                            "SEMÁFORO",
                             "ALERTA",
                             "Área",
                             "ot",
@@ -3859,13 +3793,13 @@ if rol == "admin":
 
                         filtro_alerta_operativa = (
                             st.selectbox(
-                                "Nivel de gestión",
+                                "Semáforo",
                                 [
                                     "TODOS",
-                                    "INTERVENCIÓN",
-                                    "RECUPERACIÓN",
-                                    "SEGUIMIENTO",
-                                    "EN LÍNEA",
+                                    "ROJO",
+                                    "NARANJA",
+                                    "AMARILLO",
+                                    "VERDE",
                                     "PROGRAMADA"
                                 ],
                                 key=(
@@ -3971,7 +3905,7 @@ if rol == "admin":
                         detalle_filtrado_admin = (
                             detalle_filtrado_admin[
                                 detalle_filtrado_admin[
-                                    "NIVEL DE GESTIÓN"
+                                    "NIVEL"
                                 ]
                                 == filtro_alerta_operativa
                             ]
@@ -4038,7 +3972,7 @@ if rol == "admin":
                     )
 
                     columnas_operativas_admin = [
-                        "NIVEL DE GESTIÓN",
+                        "SEMÁFORO",
                         "ALERTA",
                         "Área",
                         "ot",
