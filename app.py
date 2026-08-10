@@ -136,7 +136,7 @@ if st.session_state["usuario_logueado"] is None:
         "Sistema integrado de seguimiento y control de la Parada de Planta"
     )
 
-st.divider()
+    st.divider()
 
     st.subheader("Acceso al sistema")
 
@@ -377,7 +377,7 @@ if rol == "admin":
                         hide_index=True
                     )
 
-                                        st.divider()
+                    st.divider()
 
                     confirmar = st.checkbox(
                         f"Confirmo que deseo reemplazar la planificación de "
