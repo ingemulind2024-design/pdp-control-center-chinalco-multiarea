@@ -2346,8 +2346,14 @@ if rol == "admin":
                 )
 
                 # =========================================
-                # 4. KPIs CONSOLIDADOS
+                # 4. ESTADO GENERAL DE LA PDP
                 # =========================================
+
+                st.markdown("### Estado general de la PDP")
+                st.caption(
+                    "Indicadores ejecutivos de la vista seleccionada. "
+                    "La información se actualiza con los avances registrados."
+                )
 
                 kpis_admin = compute_kpis(
                     df_actividades_admin,
@@ -2437,7 +2443,558 @@ if rol == "admin":
                 st.divider()
 
                 # =========================================
-                # 5. KPIs POR ÁREA
+                # 5. CURVA S - PLAN VS REAL
+                # =========================================
+
+                if area_id_seleccionada_admin is None:
+                    st.subheader(
+                        "Curva S consolidada - Plan vs Real"
+                    )
+                else:
+                    st.subheader(
+                        f"Curva S - {vista_admin}"
+                    )
+
+                curva_admin = build_s_curve(
+                    df_actividades_admin,
+                    df_avances_admin
+                )
+
+                if curva_admin.empty:
+
+                    st.info(
+                        "No existe información suficiente "
+                        "para construir la Curva S consolidada."
+                    )
+
+                else:
+
+                    curva_admin_long = (
+                        curva_admin
+                        .melt(
+                            id_vars=["fecha"],
+                            value_vars=[
+                                "PLAN",
+                                "REAL"
+                            ],
+                            var_name="Curva",
+                            value_name="Avance"
+                        )
+                    )
+
+                    figura_curva_admin = px.line(
+                        curva_admin_long,
+                        x="fecha",
+                        y="Avance",
+                        color="Curva",
+                        markers=True,
+                        labels={
+                            "fecha": "Fecha / hora",
+                            "Avance": "Acumulado (%)"
+                        }
+                    )
+
+                    figura_curva_admin.update_yaxes(
+                        range=[0, 100]
+                    )
+
+                    figura_curva_admin.update_layout(
+                        height=470,
+                        hovermode="x unified"
+                    )
+
+                    st.plotly_chart(
+                        figura_curva_admin,
+                        use_container_width=True
+                    )
+
+                st.divider()
+
+                # =========================================
+                # 6. SEMÁFORO EJECUTIVO
+                # =========================================
+
+                st.markdown("### Semáforo ejecutivo")
+                st.caption(
+                    "Clasificación automática por desviación PLAN vs REAL, "
+                    "criticidad y vencimiento. Se muestran primero las "
+                    "situaciones que requieren decisión gerencial."
+                )
+
+                estado_semaforo_admin = build_activity_status(
+                    df_actividades_admin,
+                    df_avances_admin
+                )
+
+                if estado_semaforo_admin.empty:
+
+                    st.info(
+                        "No existe información suficiente para "
+                        "calcular el semáforo ejecutivo."
+                    )
+
+                else:
+
+                    estado_semaforo_admin = (
+                        estado_semaforo_admin
+                        .merge(
+                            df_ots_admin[
+                                [
+                                    "id",
+                                    "ot",
+                                    "area_id",
+                                    "equipo"
+                                ]
+                            ],
+                            left_on="ot_id",
+                            right_on="id",
+                            how="left",
+                            suffixes=(
+                                "",
+                                "_ot"
+                            )
+                        )
+                    )
+
+                    mapa_area_sem_admin = {
+                        area["id"]: area["nombre"]
+                        for area in areas_vista_admin
+                    }
+
+                    estado_semaforo_admin["Área"] = (
+                        estado_semaforo_admin[
+                            "area_id"
+                        ].map(
+                            mapa_area_sem_admin
+                        )
+                    )
+
+                    ahora_sem_admin = pd.Timestamp.now()
+
+                    inicio_sem_admin = pd.to_datetime(
+                        estado_semaforo_admin.get(
+                            "inicio_plan"
+                        ),
+                        errors="coerce"
+                    )
+
+                    fin_sem_admin = pd.to_datetime(
+                        estado_semaforo_admin.get(
+                            "fin_plan"
+                        ),
+                        errors="coerce"
+                    )
+
+                    real_sem_admin = pd.to_numeric(
+                        estado_semaforo_admin.get(
+                            "avance_real",
+                            0
+                        ),
+                        errors="coerce"
+                    ).fillna(0)
+
+                    plan_sem_admin = []
+
+                    for ini_sem, fin_sem in zip(
+                        inicio_sem_admin,
+                        fin_sem_admin
+                    ):
+
+                        if (
+                            pd.isna(ini_sem)
+                            or pd.isna(fin_sem)
+                        ):
+                            plan_sem_admin.append(0.0)
+                            continue
+
+                        if fin_sem <= ini_sem:
+                            fin_sem = (
+                                ini_sem
+                                + pd.Timedelta(minutes=1)
+                            )
+
+                        if ahora_sem_admin <= ini_sem:
+                            valor_plan_sem = 0.0
+
+                        elif ahora_sem_admin >= fin_sem:
+                            valor_plan_sem = 100.0
+
+                        else:
+                            duracion_sem = (
+                                fin_sem - ini_sem
+                            ).total_seconds()
+
+                            transcurrido_sem = (
+                                ahora_sem_admin - ini_sem
+                            ).total_seconds()
+
+                            valor_plan_sem = (
+                                transcurrido_sem
+                                / duracion_sem
+                                * 100
+                                if duracion_sem > 0
+                                else 100.0
+                            )
+
+                        plan_sem_admin.append(
+                            max(
+                                0.0,
+                                min(
+                                    100.0,
+                                    float(valor_plan_sem)
+                                )
+                            )
+                        )
+
+                    estado_semaforo_admin[
+                        "PLAN ACTUAL (%)"
+                    ] = plan_sem_admin
+
+                    estado_semaforo_admin[
+                        "DESVIACIÓN (pp)"
+                    ] = (
+                        real_sem_admin
+                        - estado_semaforo_admin[
+                            "PLAN ACTUAL (%)"
+                        ]
+                    ).round(1)
+
+                    if (
+                        "critica"
+                        not in estado_semaforo_admin.columns
+                    ):
+                        estado_semaforo_admin[
+                            "critica"
+                        ] = False
+
+                    estado_semaforo_admin[
+                        "critica"
+                    ] = (
+                        estado_semaforo_admin[
+                            "critica"
+                        ]
+                        .fillna(False)
+                    )
+
+                    def semaforo_gerencial_admin(fila):
+
+                        real = float(
+                            fila.get(
+                                "avance_real",
+                                0
+                            )
+                            or 0
+                        )
+
+                        plan = float(
+                            fila.get(
+                                "PLAN ACTUAL (%)",
+                                0
+                            )
+                            or 0
+                        )
+
+                        critica = bool(
+                            fila.get(
+                                "critica",
+                                False
+                            )
+                        )
+
+                        fin = fila.get(
+                            "fin_plan"
+                        )
+
+                        desviacion = real - plan
+
+                        if real >= 100:
+                            return (
+                                "🟢",
+                                "VERDE",
+                                "Culminada",
+                                "Sin acción requerida",
+                                90
+                            )
+
+                        if (
+                            pd.notna(fin)
+                            and ahora_sem_admin
+                            > pd.Timestamp(fin)
+                            and real < 100
+                        ):
+                            return (
+                                "🔴",
+                                "ROJO",
+                                (
+                                    "Crítica vencida"
+                                    if critica
+                                    else "Vencida"
+                                ),
+                                (
+                                    "Escalar y definir "
+                                    "recuperación inmediata"
+                                ),
+                                1 if critica else 2
+                            )
+
+                        if critica:
+
+                            if desviacion < -10:
+                                return (
+                                    "🔴",
+                                    "ROJO",
+                                    "Crítica atrasada",
+                                    (
+                                        "Escalar y definir "
+                                        "recuperación inmediata"
+                                    ),
+                                    3
+                                )
+
+                            if desviacion < -5:
+                                return (
+                                    "🟠",
+                                    "NARANJA",
+                                    "Crítica en riesgo",
+                                    (
+                                        "Aplicar plan de "
+                                        "recuperación"
+                                    ),
+                                    5
+                                )
+
+                            return (
+                                "🟢",
+                                "VERDE",
+                                "Crítica en línea",
+                                "Mantener seguimiento cercano",
+                                30
+                            )
+
+                        if desviacion < -20:
+                            return (
+                                "🔴",
+                                "ROJO",
+                                "Atraso crítico",
+                                (
+                                    "Intervención inmediata / "
+                                    "reprogramar recursos"
+                                ),
+                                4
+                            )
+
+                        if desviacion < -10:
+                            return (
+                                "🟠",
+                                "NARANJA",
+                                "Atrasada",
+                                "Definir plan de recuperación",
+                                6
+                            )
+
+                        if desviacion < -5:
+                            return (
+                                "🟡",
+                                "AMARILLO",
+                                "En riesgo",
+                                "Seguimiento del supervisor",
+                                10
+                            )
+
+                        return (
+                            "🟢",
+                            "VERDE",
+                            "En línea",
+                            "Sin acción requerida",
+                            40
+                        )
+
+                    resultado_sem_admin = (
+                        estado_semaforo_admin
+                        .apply(
+                            semaforo_gerencial_admin,
+                            axis=1
+                        )
+                    )
+
+                    estado_semaforo_admin[
+                        "SEMÁFORO"
+                    ] = resultado_sem_admin.map(
+                        lambda item: item[0]
+                    )
+
+                    estado_semaforo_admin[
+                        "NIVEL"
+                    ] = resultado_sem_admin.map(
+                        lambda item: item[1]
+                    )
+
+                    estado_semaforo_admin[
+                        "ALERTA"
+                    ] = resultado_sem_admin.map(
+                        lambda item: item[2]
+                    )
+
+                    estado_semaforo_admin[
+                        "ACCIÓN REQUERIDA"
+                    ] = resultado_sem_admin.map(
+                        lambda item: item[3]
+                    )
+
+                    estado_semaforo_admin[
+                        "_PRIORIDAD"
+                    ] = resultado_sem_admin.map(
+                        lambda item: item[4]
+                    )
+
+                    verdes_sem_admin = int(
+                        (
+                            estado_semaforo_admin[
+                                "NIVEL"
+                            ] == "VERDE"
+                        ).sum()
+                    )
+
+                    amarillos_sem_admin = int(
+                        (
+                            estado_semaforo_admin[
+                                "NIVEL"
+                            ] == "AMARILLO"
+                        ).sum()
+                    )
+
+                    naranjas_sem_admin = int(
+                        (
+                            estado_semaforo_admin[
+                                "NIVEL"
+                            ] == "NARANJA"
+                        ).sum()
+                    )
+
+                    rojos_sem_admin = int(
+                        (
+                            estado_semaforo_admin[
+                                "NIVEL"
+                            ] == "ROJO"
+                        ).sum()
+                    )
+
+                    gs1, gs2, gs3, gs4 = st.columns(4)
+
+                    with gs1:
+                        st.metric(
+                            "🟢 En línea",
+                            verdes_sem_admin
+                        )
+
+                    with gs2:
+                        st.metric(
+                            "🟡 En riesgo",
+                            amarillos_sem_admin
+                        )
+
+                    with gs3:
+                        st.metric(
+                            "🟠 Recuperación",
+                            naranjas_sem_admin
+                        )
+
+                    with gs4:
+                        st.metric(
+                            "🔴 Intervención",
+                            rojos_sem_admin
+                        )
+
+                    foco_gerencial_admin = (
+                        estado_semaforo_admin[
+                            estado_semaforo_admin[
+                                "NIVEL"
+                            ].isin(
+                                [
+                                    "ROJO",
+                                    "NARANJA",
+                                    "AMARILLO"
+                                ]
+                            )
+                        ]
+                        .sort_values(
+                            [
+                                "_PRIORIDAD",
+                                "avance_real"
+                            ],
+                            ascending=[
+                                True,
+                                True
+                            ]
+                        )
+                        .head(12)
+                        .copy()
+                    )
+
+                    if foco_gerencial_admin.empty:
+
+                        st.success(
+                            "No existen desviaciones que "
+                            "requieran atención en este momento."
+                        )
+
+                    else:
+
+                        st.markdown(
+                            "#### Foco de atención gerencial"
+                        )
+
+                        columnas_foco_admin = [
+                            "SEMÁFORO",
+                            "ALERTA",
+                            "Área",
+                            "ot",
+                            "equipo",
+                            "codigo_actividad",
+                            "PLAN ACTUAL (%)",
+                            "avance_real",
+                            "DESVIACIÓN (pp)",
+                            "supervisor",
+                            "ACCIÓN REQUERIDA"
+                        ]
+
+                        columnas_foco_admin = [
+                            columna
+                            for columna
+                            in columnas_foco_admin
+                            if columna
+                            in foco_gerencial_admin.columns
+                        ]
+
+                        tabla_foco_admin = (
+                            foco_gerencial_admin[
+                                columnas_foco_admin
+                            ]
+                            .rename(
+                                columns={
+                                    "ot": "OT",
+                                    "equipo": "EQUIPO",
+                                    "codigo_actividad":
+                                        "ACTIVIDAD",
+                                    "avance_real":
+                                        "REAL (%)",
+                                    "supervisor":
+                                        "SUPERVISOR"
+                                }
+                            )
+                        )
+
+                        st.dataframe(
+                            tabla_foco_admin,
+                            use_container_width=True,
+                            hide_index=True,
+                            height=320
+                        )
+
+                st.divider()
+
+                # =========================================
+                # 7. COMPARATIVO POR ÁREA
                 # =========================================
 
                 if area_id_seleccionada_admin is None:
@@ -2630,75 +3187,7 @@ if rol == "admin":
                 st.divider()
 
                 # =========================================
-                # 6. CURVA S CONSOLIDADA
-                # =========================================
-
-                if area_id_seleccionada_admin is None:
-                    st.subheader(
-                        "Curva S consolidada - Plan vs Real"
-                    )
-                else:
-                    st.subheader(
-                        f"Curva S - {vista_admin}"
-                    )
-
-                curva_admin = build_s_curve(
-                    df_actividades_admin,
-                    df_avances_admin
-                )
-
-                if curva_admin.empty:
-
-                    st.info(
-                        "No existe información suficiente "
-                        "para construir la Curva S consolidada."
-                    )
-
-                else:
-
-                    curva_admin_long = (
-                        curva_admin
-                        .melt(
-                            id_vars=["fecha"],
-                            value_vars=[
-                                "PLAN",
-                                "REAL"
-                            ],
-                            var_name="Curva",
-                            value_name="Avance"
-                        )
-                    )
-
-                    figura_curva_admin = px.line(
-                        curva_admin_long,
-                        x="fecha",
-                        y="Avance",
-                        color="Curva",
-                        markers=True,
-                        labels={
-                            "fecha": "Fecha / hora",
-                            "Avance": "Acumulado (%)"
-                        }
-                    )
-
-                    figura_curva_admin.update_yaxes(
-                        range=[0, 100]
-                    )
-
-                    figura_curva_admin.update_layout(
-                        height=470,
-                        hovermode="x unified"
-                    )
-
-                    st.plotly_chart(
-                        figura_curva_admin,
-                        use_container_width=True
-                    )
-
-                st.divider()
-
-                # =========================================
-                # 7. PENDIENTES CRÍTICOS / PRIORITARIOS
+                # 8. PENDIENTES CRÍTICOS / PRIORITARIOS
                 # =========================================
 
                 if area_id_seleccionada_admin is None:
@@ -2874,7 +3363,7 @@ if rol == "admin":
                 st.divider()
 
                 # =========================================
-                # 8. CENTRO DE CONTROL OPERATIVO
+                # 9. CENTRO DE CONTROL OPERATIVO
                 # =========================================
 
                 if area_id_seleccionada_admin is None:
