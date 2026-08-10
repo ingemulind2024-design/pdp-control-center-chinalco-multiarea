@@ -2576,19 +2576,11 @@ else:
                         )
                     )
 
-                    for indice, archivo_preview in enumerate(
-                        archivos_evidencia[:4]
-                    ):
-
-                        with columnas_preview[
-                            indice % len(columnas_preview)
-                        ]:
-
-                            st.image(
-                                archivo_preview,
-                                caption=archivo_preview.name,
-                                use_container_width=True
-                            )
+                    archivo_evidencia = st.file_uploader(
+                        "Adjuntar evidencia fotográfica",
+                         type=["jpg", "jpeg", "png"],
+                         accept_multiple_files=False
+                     )
 
                 guardar = st.button(
                     "Guardar avance",
