@@ -2163,24 +2163,648 @@ if rol == "admin":
 
         st.subheader("Dashboard Consolidado Chinalco")
 
-        st.info(
-            "Acceso administrativo consolidado a "
-            "Molinos, Chancado, Flotación y Relaves."
+        st.caption(
+            "Vista administrativa consolidada de Molinos, "
+            "Chancado, Flotación y Relaves."
         )
 
-        col1, col2, col3, col4 = st.columns(4)
+        # =================================================
+        # 1. CARGAR ÁREAS ACTIVAS
+        # =================================================
 
-        with col1:
-            st.metric("MOLINOS", "0%")
+        resultado_areas_admin = (
+            supabase
+            .table("areas")
+            .select("id,codigo,nombre")
+            .eq("activo", True)
+            .order("id")
+            .execute()
+        )
 
-        with col2:
-            st.metric("CHANCADO", "0%")
+        areas_admin = (
+            resultado_areas_admin.data
+            or []
+        )
 
-        with col3:
-            st.metric("FLOTACIÓN", "0%")
+        if not areas_admin:
 
-        with col4:
-            st.metric("RELAVES", "0%")
+            st.warning(
+                "No existen áreas activas configuradas."
+            )
+
+        else:
+
+            ids_areas_admin = [
+                area["id"]
+                for area in areas_admin
+            ]
+
+            # =============================================
+            # 2. OTs DE TODAS LAS ÁREAS
+            # =============================================
+
+            ots_admin = (
+                supabase
+                .table("ots")
+                .select(
+                    "id,ot,area_id,equipo,descripcion,activo"
+                )
+                .in_(
+                    "area_id",
+                    ids_areas_admin
+                )
+                .eq(
+                    "activo",
+                    True
+                )
+                .execute()
+            ).data or []
+
+            df_ots_admin = pd.DataFrame(
+                ots_admin
+            )
+
+            if not ots_admin:
+
+                st.warning(
+                    "Todavía no existen OTs activas "
+                    "en las áreas configuradas."
+                )
+
+            else:
+
+                ids_ots_admin = [
+                    ot["id"]
+                    for ot in ots_admin
+                ]
+
+                # =========================================
+                # 3. ACTIVIDADES CONSOLIDADAS
+                # =========================================
+
+                actividades_admin = (
+                    supabase
+                    .table("actividades")
+                    .select(
+                        "id,ot_id,codigo_actividad,descripcion,"
+                        "supervisor,especialidad,grupo,peso,"
+                        "inicio_plan,fin_plan,seccion,personal,"
+                        "duracion_h,hh_plan,critica,activo"
+                    )
+                    .in_(
+                        "ot_id",
+                        ids_ots_admin
+                    )
+                    .eq(
+                        "activo",
+                        True
+                    )
+                    .execute()
+                ).data or []
+
+                df_actividades_admin = pd.DataFrame(
+                    actividades_admin
+                )
+
+                if actividades_admin:
+
+                    ids_actividades_admin = [
+                        actividad["id"]
+                        for actividad in actividades_admin
+                    ]
+
+                    avances_admin = (
+                        supabase
+                        .table("avances_actividad")
+                        .select(
+                            "id,actividad_id,avance,"
+                            "descripcion_avance,observaciones,"
+                            "tipo_evidencia,critica,evidencias,"
+                            "usuario,fecha_registro"
+                        )
+                        .in_(
+                            "actividad_id",
+                            ids_actividades_admin
+                        )
+                        .execute()
+                    ).data or []
+
+                else:
+
+                    avances_admin = []
+
+                df_avances_admin = pd.DataFrame(
+                    avances_admin
+                )
+
+                # =========================================
+                # 4. KPIs CONSOLIDADOS
+                # =========================================
+
+                kpis_admin = compute_kpis(
+                    df_actividades_admin,
+                    df_avances_admin
+                )
+
+                total_ots_admin = len(
+                    df_ots_admin
+                )
+
+                a1, a2, a3, a4, a5, a6 = st.columns(
+                    6
+                )
+
+                with a1:
+                    st.metric(
+                        "OTs",
+                        total_ots_admin
+                    )
+
+                with a2:
+                    st.metric(
+                        "Actividades",
+                        kpis_admin[
+                            "actividades"
+                        ]
+                    )
+
+                with a3:
+                    st.metric(
+                        "Avance general",
+                        f"{kpis_admin['avance_general']:.1f}%"
+                    )
+
+                with a4:
+                    st.metric(
+                        "Culminadas",
+                        kpis_admin[
+                            "culminadas"
+                        ]
+                    )
+
+                with a5:
+                    st.metric(
+                        "En ejecución",
+                        kpis_admin[
+                            "parciales"
+                        ]
+                    )
+
+                with a6:
+                    st.metric(
+                        "No iniciadas",
+                        kpis_admin[
+                            "no_iniciadas"
+                        ]
+                    )
+
+                b1, b2, b3, b4 = st.columns(
+                    4
+                )
+
+                with b1:
+                    st.metric(
+                        "Plan actual",
+                        f"{kpis_admin.get('avance_plan', 0):.1f}%"
+                    )
+
+                with b2:
+                    st.metric(
+                        "SPI",
+                        f"{kpis_admin['spi']:.2f}"
+                    )
+
+                with b3:
+                    st.metric(
+                        "HH planificadas",
+                        f"{kpis_admin['hh_plan']:.0f}"
+                    )
+
+                with b4:
+                    st.metric(
+                        "HH ganadas",
+                        f"{kpis_admin['hh_ganadas']:.0f}"
+                    )
+
+                st.divider()
+
+                # =========================================
+                # 5. KPIs POR ÁREA
+                # =========================================
+
+                st.subheader(
+                    "Comparativo por área"
+                )
+
+                resumen_areas = []
+
+                for area in areas_admin:
+
+                    area_id_admin = area["id"]
+
+                    ots_area_admin = (
+                        df_ots_admin[
+                            df_ots_admin["area_id"]
+                            == area_id_admin
+                        ].copy()
+                        if not df_ots_admin.empty
+                        else pd.DataFrame()
+                    )
+
+                    ids_ots_area_admin = (
+                        ots_area_admin["id"]
+                        .dropna()
+                        .tolist()
+                        if not ots_area_admin.empty
+                        else []
+                    )
+
+                    if (
+                        ids_ots_area_admin
+                        and not df_actividades_admin.empty
+                    ):
+
+                        actividades_area_admin = (
+                            df_actividades_admin[
+                                df_actividades_admin["ot_id"]
+                                .isin(
+                                    ids_ots_area_admin
+                                )
+                            ].copy()
+                        )
+
+                    else:
+
+                        actividades_area_admin = (
+                            pd.DataFrame()
+                        )
+
+                    ids_actividades_area_admin = (
+                        actividades_area_admin["id"]
+                        .dropna()
+                        .tolist()
+                        if not actividades_area_admin.empty
+                        else []
+                    )
+
+                    if (
+                        ids_actividades_area_admin
+                        and not df_avances_admin.empty
+                    ):
+
+                        avances_area_admin = (
+                            df_avances_admin[
+                                df_avances_admin[
+                                    "actividad_id"
+                                ].isin(
+                                    ids_actividades_area_admin
+                                )
+                            ].copy()
+                        )
+
+                    else:
+
+                        avances_area_admin = (
+                            pd.DataFrame()
+                        )
+
+                    kpis_area_admin = compute_kpis(
+                        actividades_area_admin,
+                        avances_area_admin
+                    )
+
+                    resumen_areas.append({
+                        "Área": area["nombre"],
+                        "Código": area["codigo"],
+                        "OTs": len(ots_area_admin),
+                        "Actividades": kpis_area_admin[
+                            "actividades"
+                        ],
+                        "Plan (%)": round(
+                            kpis_area_admin.get(
+                                "avance_plan",
+                                0
+                            ),
+                            1
+                        ),
+                        "Real (%)": round(
+                            kpis_area_admin[
+                                "avance_general"
+                            ],
+                            1
+                        ),
+                        "SPI": round(
+                            kpis_area_admin[
+                                "spi"
+                            ],
+                            2
+                        ),
+                        "Culminadas": kpis_area_admin[
+                            "culminadas"
+                        ],
+                        "En ejecución": kpis_area_admin[
+                            "parciales"
+                        ],
+                        "No iniciadas": kpis_area_admin[
+                            "no_iniciadas"
+                        ],
+                        "Pendientes": kpis_area_admin[
+                            "pendientes"
+                        ],
+                        "HH plan": round(
+                            kpis_area_admin[
+                                "hh_plan"
+                            ],
+                            0
+                        ),
+                        "HH ganadas": round(
+                            kpis_area_admin[
+                                "hh_ganadas"
+                            ],
+                            0
+                        )
+                    })
+
+                df_resumen_areas = pd.DataFrame(
+                    resumen_areas
+                )
+
+                if not df_resumen_areas.empty:
+
+                    figura_areas = go.Figure()
+
+                    figura_areas.add_bar(
+                        x=df_resumen_areas["Área"],
+                        y=df_resumen_areas["Plan (%)"],
+                        name="PLAN"
+                    )
+
+                    figura_areas.add_bar(
+                        x=df_resumen_areas["Área"],
+                        y=df_resumen_areas["Real (%)"],
+                        name="REAL"
+                    )
+
+                    figura_areas.update_layout(
+                        barmode="group",
+                        yaxis=dict(
+                            title="Avance (%)",
+                            range=[0, 100]
+                        ),
+                        xaxis_title="Área",
+                        legend_title="Curva",
+                        height=430,
+                        margin=dict(
+                            l=20,
+                            r=20,
+                            t=20,
+                            b=20
+                        )
+                    )
+
+                    st.plotly_chart(
+                        figura_areas,
+                        use_container_width=True
+                    )
+
+                    st.dataframe(
+                        df_resumen_areas,
+                        use_container_width=True,
+                        hide_index=True,
+                        height=280
+                    )
+
+                st.divider()
+
+                # =========================================
+                # 6. CURVA S CONSOLIDADA
+                # =========================================
+
+                st.subheader(
+                    "Curva S consolidada - Plan vs Real"
+                )
+
+                curva_admin = build_s_curve(
+                    df_actividades_admin,
+                    df_avances_admin
+                )
+
+                if curva_admin.empty:
+
+                    st.info(
+                        "No existe información suficiente "
+                        "para construir la Curva S consolidada."
+                    )
+
+                else:
+
+                    curva_admin_long = (
+                        curva_admin
+                        .melt(
+                            id_vars=["fecha"],
+                            value_vars=[
+                                "PLAN",
+                                "REAL"
+                            ],
+                            var_name="Curva",
+                            value_name="Avance"
+                        )
+                    )
+
+                    figura_curva_admin = px.line(
+                        curva_admin_long,
+                        x="fecha",
+                        y="Avance",
+                        color="Curva",
+                        markers=True,
+                        labels={
+                            "fecha": "Fecha / hora",
+                            "Avance": "Acumulado (%)"
+                        }
+                    )
+
+                    figura_curva_admin.update_yaxes(
+                        range=[0, 100]
+                    )
+
+                    figura_curva_admin.update_layout(
+                        height=470,
+                        hovermode="x unified"
+                    )
+
+                    st.plotly_chart(
+                        figura_curva_admin,
+                        use_container_width=True
+                    )
+
+                st.divider()
+
+                # =========================================
+                # 7. PENDIENTES CRÍTICOS / PRIORITARIOS
+                # =========================================
+
+                st.subheader(
+                    "Pendientes críticos y prioritarios"
+                )
+
+                estado_admin = build_activity_status(
+                    df_actividades_admin,
+                    df_avances_admin
+                )
+
+                if estado_admin.empty:
+
+                    st.info(
+                        "No existen actividades pendientes."
+                    )
+
+                else:
+
+                    estado_admin = (
+                        estado_admin
+                        .merge(
+                            df_ots_admin[
+                                [
+                                    "id",
+                                    "ot",
+                                    "area_id",
+                                    "equipo"
+                                ]
+                            ],
+                            left_on="ot_id",
+                            right_on="id",
+                            how="left",
+                            suffixes=(
+                                "",
+                                "_ot"
+                            )
+                        )
+                    )
+
+                    mapa_nombres_area_admin = {
+                        area["id"]: area["nombre"]
+                        for area in areas_admin
+                    }
+
+                    estado_admin["Área"] = (
+                        estado_admin[
+                            "area_id"
+                        ].map(
+                            mapa_nombres_area_admin
+                        )
+                    )
+
+                    if "critica" not in estado_admin.columns:
+                        estado_admin["critica"] = False
+
+                    estado_admin["critica"] = (
+                        estado_admin[
+                            "critica"
+                        ]
+                        .fillna(False)
+                    )
+
+                    pendientes_admin = (
+                        estado_admin[
+                            estado_admin[
+                                "avance_real"
+                            ] < 100
+                        ]
+                        .copy()
+                    )
+
+                    if pendientes_admin.empty:
+
+                        st.success(
+                            "No existen actividades pendientes."
+                        )
+
+                    else:
+
+                        pendientes_admin = (
+                            pendientes_admin
+                            .sort_values(
+                                [
+                                    "critica",
+                                    "avance_real"
+                                ],
+                                ascending=[
+                                    False,
+                                    True
+                                ]
+                            )
+                        )
+
+                        pendientes_admin[
+                            "Prioridad"
+                        ] = np.where(
+                            pendientes_admin[
+                                "critica"
+                            ],
+                            "CRÍTICA",
+                            "PENDIENTE"
+                        )
+
+                        columnas_pendientes_admin = [
+                            "Prioridad",
+                            "Área",
+                            "ot",
+                            "equipo",
+                            "codigo_actividad",
+                            "descripcion",
+                            "supervisor",
+                            "especialidad",
+                            "avance_real",
+                            "inicio_plan",
+                            "fin_plan"
+                        ]
+
+                        columnas_pendientes_admin = [
+                            columna
+                            for columna
+                            in columnas_pendientes_admin
+                            if columna
+                            in pendientes_admin.columns
+                        ]
+
+                        tabla_pendientes_admin = (
+                            pendientes_admin[
+                                columnas_pendientes_admin
+                            ]
+                            .head(30)
+                            .copy()
+                        )
+
+                        tabla_pendientes_admin = (
+                            tabla_pendientes_admin
+                            .rename(
+                                columns={
+                                    "ot": "OT",
+                                    "equipo": "EQUIPO",
+                                    "codigo_actividad":
+                                        "ACTIVIDAD",
+                                    "descripcion":
+                                        "DESCRIPCIÓN",
+                                    "supervisor":
+                                        "SUPERVISOR",
+                                    "especialidad":
+                                        "ESPECIALIDAD",
+                                    "avance_real":
+                                        "AVANCE (%)",
+                                    "inicio_plan":
+                                        "INICIO PLAN",
+                                    "fin_plan":
+                                        "FIN PLAN"
+                                }
+                            )
+                        )
+
+                        st.dataframe(
+                            tabla_pendientes_admin,
+                            use_container_width=True,
+                            hide_index=True,
+                            height=520
+                        )
 
 
     # =====================================================
