@@ -2576,12 +2576,6 @@ else:
                         )
                     )
 
-                    archivo_evidencia = st.file_uploader(
-                        "Adjuntar evidencia fotográfica",
-                         type=["jpg", "jpeg", "png"],
-                         accept_multiple_files=False
-                     )
-
                 guardar = st.button(
                     "Guardar avance",
                     type="primary",
