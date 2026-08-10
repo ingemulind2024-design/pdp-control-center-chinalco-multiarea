@@ -248,26 +248,176 @@ st.divider()
 
 if rol == "admin":
 
-    st.subheader("Dashboard Consolidado Chinalco")
+    # =====================================================
+    # MENÚ ADMINISTRADOR
+    # =====================================================
 
-    st.info(
-        "Acceso administrativo a Molinos, Chancado, "
-        "Flotación y Relaves."
-    )
+    with st.sidebar:
 
-    col1, col2, col3, col4 = st.columns(4)
+        st.divider()
 
-    with col1:
-        st.metric("MOLINOS", "0%")
+        pagina_admin = st.radio(
+            "Menú administrador",
+            [
+                "Dashboard general",
+                "Importar planificación",
+                "Administrar OTs",
+                "Reportes"
+            ]
+        )
 
-    with col2:
-        st.metric("CHANCADO", "0%")
 
-    with col3:
-        st.metric("FLOTACIÓN", "0%")
+    # =====================================================
+    # DASHBOARD GENERAL
+    # =====================================================
 
-    with col4:
-        st.metric("RELAVES", "0%")
+    if pagina_admin == "Dashboard general":
+
+        st.subheader("Dashboard Consolidado Chinalco")
+
+        st.info(
+            "Acceso administrativo consolidado a "
+            "Molinos, Chancado, Flotación y Relaves."
+        )
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            st.metric("MOLINOS", "0%")
+
+        with col2:
+            st.metric("CHANCADO", "0%")
+
+        with col3:
+            st.metric("FLOTACIÓN", "0%")
+
+        with col4:
+            st.metric("RELAVES", "0%")
+
+
+    # =====================================================
+    # IMPORTAR PLANIFICACIÓN
+    # =====================================================
+
+    elif pagina_admin == "Importar planificación":
+
+        st.subheader("Importar planificación por área")
+
+        st.warning(
+            "La planificación que se cargue corresponderá "
+            "únicamente al área seleccionada."
+        )
+
+        resultado_areas = (
+            supabase
+            .table("areas")
+            .select("id,codigo,nombre")
+            .eq("activo", True)
+            .order("id")
+            .execute()
+        )
+
+        areas_disponibles = resultado_areas.data or []
+
+        mapa_areas = {
+            f"{area['codigo']} - {area['nombre']}": area
+            for area in areas_disponibles
+        }
+
+        if not mapa_areas:
+
+            st.error(
+                "No existen áreas disponibles en la base de datos."
+            )
+
+        else:
+
+            area_texto = st.selectbox(
+                "Seleccione el área",
+                list(mapa_areas.keys())
+            )
+
+            area_seleccionada = mapa_areas[area_texto]
+
+            st.info(
+                f"Área seleccionada: "
+                f"{area_seleccionada['nombre']}"
+            )
+
+            archivo = st.file_uploader(
+                "Seleccione el Excel de planificación",
+                type=["xlsx"]
+            )
+
+            if archivo is not None:
+
+                try:
+
+                    df_ots = pd.read_excel(
+                        archivo,
+                        sheet_name="OTs"
+                    )
+
+                    df_actividades = pd.read_excel(
+                        archivo,
+                        sheet_name="Actividades"
+                    )
+
+                    st.success(
+                        f"Archivo leído correctamente: "
+                        f"{len(df_ots)} OTs y "
+                        f"{len(df_actividades)} actividades."
+                    )
+
+                    st.write("Vista previa de OTs")
+
+                    st.dataframe(
+                        df_ots.head(10),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+                    st.write("Vista previa de actividades")
+
+                    st.dataframe(
+                        df_actividades.head(10),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+                except Exception as exc:
+
+                    st.error(
+                        f"No fue posible leer el Excel: {exc}"
+                    )
+
+
+    # =====================================================
+    # ADMINISTRAR OTs
+    # =====================================================
+
+    elif pagina_admin == "Administrar OTs":
+
+        st.subheader("Administrar OTs")
+
+        st.info(
+            "Aquí administraremos las OTs "
+            "de todas las áreas."
+        )
+
+
+    # =====================================================
+    # REPORTES
+    # =====================================================
+
+    elif pagina_admin == "Reportes":
+
+        st.subheader("Reportes consolidados")
+
+        st.info(
+            "Aquí aparecerán los reportes generales "
+            "de Chinalco."
+        )
 
 
 else:
