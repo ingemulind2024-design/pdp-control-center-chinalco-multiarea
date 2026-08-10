@@ -2164,8 +2164,9 @@ if rol == "admin":
         st.subheader("Dashboard Consolidado Chinalco")
 
         st.caption(
-            "Vista administrativa consolidada de Molinos, "
-            "Chancado, Flotación y Relaves."
+            "Vista administrativa con selector dinámico por área. "
+            "Puede revisar Todas las áreas o ingresar al detalle "
+            "de Molinos, Chancado, Flotación o Relaves sin cerrar sesión."
         )
 
         # =================================================
@@ -2194,14 +2195,61 @@ if rol == "admin":
 
         else:
 
+            # =============================================
+            # SELECTOR DE VISTA ADMINISTRATIVA
+            # =============================================
+
+            mapa_vistas_admin = {
+                "Todas las áreas": None
+            }
+
+            for area in areas_admin:
+                mapa_vistas_admin[
+                    area["nombre"]
+                ] = area["id"]
+
+            vista_admin = st.selectbox(
+                "Seleccionar vista",
+                list(mapa_vistas_admin.keys()),
+                key="selector_vista_admin"
+            )
+
+            area_id_seleccionada_admin = (
+                mapa_vistas_admin[
+                    vista_admin
+                ]
+            )
+
+            if area_id_seleccionada_admin is None:
+
+                areas_vista_admin = areas_admin
+
+                st.info(
+                    "Vista actual: TODAS LAS ÁREAS"
+                )
+
+            else:
+
+                areas_vista_admin = [
+                    area
+                    for area in areas_admin
+                    if area["id"]
+                    == area_id_seleccionada_admin
+                ]
+
+                st.info(
+                    f"Vista actual: {vista_admin}"
+                )
+
             ids_areas_admin = [
                 area["id"]
-                for area in areas_admin
+                for area in areas_vista_admin
             ]
 
             # =============================================
-            # 2. OTs DE TODAS LAS ÁREAS
+            # 2. OTs DE LA VISTA SELECCIONADA
             # =============================================
+
 
             ots_admin = (
                 supabase
@@ -2392,13 +2440,18 @@ if rol == "admin":
                 # 5. KPIs POR ÁREA
                 # =========================================
 
-                st.subheader(
-                    "Comparativo por área"
-                )
+                if area_id_seleccionada_admin is None:
+                    st.subheader(
+                        "Comparativo por área"
+                    )
+                else:
+                    st.subheader(
+                        f"Indicadores de {vista_admin}"
+                    )
 
                 resumen_areas = []
 
-                for area in areas_admin:
+                for area in areas_vista_admin:
 
                     area_id_admin = area["id"]
 
@@ -2580,9 +2633,14 @@ if rol == "admin":
                 # 6. CURVA S CONSOLIDADA
                 # =========================================
 
-                st.subheader(
-                    "Curva S consolidada - Plan vs Real"
-                )
+                if area_id_seleccionada_admin is None:
+                    st.subheader(
+                        "Curva S consolidada - Plan vs Real"
+                    )
+                else:
+                    st.subheader(
+                        f"Curva S - {vista_admin}"
+                    )
 
                 curva_admin = build_s_curve(
                     df_actividades_admin,
@@ -2643,9 +2701,14 @@ if rol == "admin":
                 # 7. PENDIENTES CRÍTICOS / PRIORITARIOS
                 # =========================================
 
-                st.subheader(
-                    "Pendientes críticos y prioritarios"
-                )
+                if area_id_seleccionada_admin is None:
+                    st.subheader(
+                        "Pendientes críticos y prioritarios"
+                    )
+                else:
+                    st.subheader(
+                        f"Pendientes críticos y prioritarios - {vista_admin}"
+                    )
 
                 estado_admin = build_activity_status(
                     df_actividades_admin,
@@ -2683,7 +2746,7 @@ if rol == "admin":
 
                     mapa_nombres_area_admin = {
                         area["id"]: area["nombre"]
-                        for area in areas_admin
+                        for area in areas_vista_admin
                     }
 
                     estado_admin["Área"] = (
