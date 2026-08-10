@@ -2576,6 +2576,20 @@ else:
                         )
                     )
 
+                    for indice, archivo_preview in enumerate(
+                        archivos_evidencia[:4]
+                    ):
+
+                        with columnas_preview[
+                            indice % len(columnas_preview)
+                        ]:
+
+                            st.image(
+                                archivo_preview,
+                                caption=archivo_preview.name,
+                                use_container_width=True
+                            )
+
                 guardar = st.button(
                     "Guardar avance",
                     type="primary",
@@ -2684,16 +2698,466 @@ else:
         st.subheader(f"Detalle por OT - {nombre_area}")
 
         if not ots_area:
+
             st.warning(
                 "Todavía no existen OTs cargadas para esta área."
             )
+
         else:
-            st.dataframe(
-                ots_area,
-                use_container_width=True,
-                hide_index=True
+
+            # ================================================
+            # SELECCIÓN DE OT
+            # ================================================
+
+            mapa_detalle_ots = {
+                f"{ot['ot']} - {ot.get('equipo') or 'Sin equipo'}": ot
+                for ot in ots_area
+            }
+
+            ot_detalle_texto = st.selectbox(
+                "Seleccione una OT",
+                list(mapa_detalle_ots.keys()),
+                key="detalle_ot_selector"
             )
 
+            ot_detalle = mapa_detalle_ots[
+                ot_detalle_texto
+            ]
+
+            # ================================================
+            # INFORMACIÓN GENERAL DE LA OT
+            # ================================================
+
+            c1, c2 = st.columns(2)
+
+            with c1:
+                st.info(
+                    f"**OT:** {ot_detalle['ot']}"
+                )
+
+            with c2:
+                st.info(
+                    f"**Equipo:** "
+                    f"{ot_detalle.get('equipo') or 'Sin equipo'}"
+                )
+
+            if ot_detalle.get("descripcion"):
+
+                st.caption(
+                    f"Descripción: "
+                    f"{ot_detalle['descripcion']}"
+                )
+
+            # ================================================
+            # OBTENER ACTIVIDADES DE LA OT
+            # ================================================
+
+            resultado_actividades_detalle = (
+                supabase
+                .table("actividades")
+                .select(
+                    "id,ot_id,codigo_actividad,descripcion,"
+                    "supervisor,especialidad,grupo,peso,"
+                    "inicio_plan,fin_plan,seccion,personal,"
+                    "duracion_h,hh_plan,critica,activo"
+                )
+                .eq(
+                    "ot_id",
+                    ot_detalle["id"]
+                )
+                .eq(
+                    "activo",
+                    True
+                )
+                .order(
+                    "codigo_actividad"
+                )
+                .execute()
+            )
+
+            actividades_detalle = (
+                resultado_actividades_detalle.data
+                or []
+            )
+
+            if not actividades_detalle:
+
+                st.warning(
+                    "Esta OT no tiene actividades registradas."
+                )
+
+            else:
+
+                df_actividades_detalle = pd.DataFrame(
+                    actividades_detalle
+                )
+
+                # ============================================
+                # OBTENER AVANCES DE LAS ACTIVIDADES
+                # ============================================
+
+                ids_actividades_detalle = (
+                    df_actividades_detalle["id"]
+                    .dropna()
+                    .tolist()
+                )
+
+                resultado_avances_detalle = (
+                    supabase
+                    .table("avances_actividad")
+                    .select(
+                        "id,actividad_id,avance,"
+                        "descripcion_avance,observaciones,"
+                        "tipo_evidencia,critica,evidencias,"
+                        "usuario,fecha_registro"
+                    )
+                    .in_(
+                        "actividad_id",
+                        ids_actividades_detalle
+                    )
+                    .execute()
+                )
+
+                avances_detalle = (
+                    resultado_avances_detalle.data
+                    or []
+                )
+
+                df_avances_detalle = pd.DataFrame(
+                    avances_detalle
+                )
+
+                # ============================================
+                # ESTADO ACTUAL DE LAS ACTIVIDADES
+                # ============================================
+
+                estado_ot = build_activity_status(
+                    df_actividades_detalle,
+                    df_avances_detalle
+                )
+
+                kpis_ot = compute_kpis(
+                    df_actividades_detalle,
+                    df_avances_detalle
+                )
+
+                # ============================================
+                # INDICADORES DE LA OT
+                # ============================================
+
+                o1, o2, o3, o4, o5, o6 = st.columns(6)
+
+                with o1:
+
+                    st.metric(
+                        "Actividades",
+                        kpis_ot["actividades"]
+                    )
+
+                with o2:
+
+                    st.metric(
+                        "Avance OT",
+                        f"{kpis_ot['avance_general']:.1f}%"
+                    )
+
+                with o3:
+
+                    st.metric(
+                        "Culminadas",
+                        kpis_ot["culminadas"]
+                    )
+
+                with o4:
+
+                    st.metric(
+                        "En ejecución",
+                        kpis_ot["parciales"]
+                    )
+
+                with o5:
+
+                    st.metric(
+                        "No iniciadas",
+                        kpis_ot["no_iniciadas"]
+                    )
+
+                with o6:
+
+                    st.metric(
+                        "Pendientes",
+                        kpis_ot["pendientes"]
+                    )
+
+                hh1, hh2 = st.columns(2)
+
+                with hh1:
+
+                    st.metric(
+                        "HH planificadas",
+                        f"{kpis_ot['hh_plan']:.0f}"
+                    )
+
+                with hh2:
+
+                    st.metric(
+                        "HH ganadas",
+                        f"{kpis_ot['hh_ganadas']:.0f}"
+                    )
+
+                st.divider()
+
+                # ============================================
+                # BARRA DE AVANCE
+                # ============================================
+
+                avance_ot = float(
+                    kpis_ot["avance_general"]
+                )
+
+                st.write(
+                    f"**Avance general de la OT: "
+                    f"{avance_ot:.1f}%**"
+                )
+
+                st.progress(
+                    min(
+                        max(
+                            avance_ot / 100,
+                            0
+                        ),
+                        1
+                    )
+                )
+
+                st.divider()
+
+                # ============================================
+                # ESTADO TEXTUAL
+                # ============================================
+
+                estado_ot["estado"] = np.where(
+                    estado_ot["avance_real"] >= 100,
+                    "CULMINADA",
+                    np.where(
+                        estado_ot["avance_real"] > 0,
+                        "EN EJECUCIÓN",
+                        "NO INICIADA"
+                    )
+                )
+
+                # ============================================
+                # ÚLTIMO REPORTE
+                # ============================================
+
+                if not df_avances_detalle.empty:
+
+                    ultimos_reportes = latest_progress(
+                        df_avances_detalle
+                    )
+
+                    columnas_reporte = [
+                        columna
+                        for columna in [
+                            "actividad_id",
+                            "descripcion_avance",
+                            "observaciones",
+                            "tipo_evidencia",
+                            "usuario",
+                            "fecha_registro"
+                        ]
+                        if columna in ultimos_reportes.columns
+                    ]
+
+                    columnas_reporte = [
+                        columna
+                        for columna in columnas_reporte
+                        if columna not in estado_ot.columns
+                        or columna == "actividad_id"
+                    ]
+
+                    if columnas_reporte:
+
+                        estado_ot = estado_ot.merge(
+                            ultimos_reportes[
+                                columnas_reporte
+                            ],
+                            left_on="id",
+                            right_on="actividad_id",
+                            how="left",
+                            suffixes=(
+                                "",
+                                "_ultimo"
+                            )
+                        )
+
+                # ============================================
+                # TABLA DE ACTIVIDADES
+                # ============================================
+
+                columnas_detalle_ot = [
+                    "codigo_actividad",
+                    "descripcion",
+                    "supervisor",
+                    "especialidad",
+                    "grupo",
+                    "inicio_plan",
+                    "fin_plan",
+                    "personal",
+                    "hh_plan",
+                    "avance_real",
+                    "estado"
+                ]
+
+                columnas_detalle_ot = [
+                    columna
+                    for columna in columnas_detalle_ot
+                    if columna in estado_ot.columns
+                ]
+
+                tabla_ot = estado_ot[
+                    columnas_detalle_ot
+                ].copy()
+
+                tabla_ot = tabla_ot.rename(
+                    columns={
+                        "codigo_actividad":
+                            "ACTIVIDAD",
+                        "descripcion":
+                            "DESCRIPCIÓN",
+                        "supervisor":
+                            "SUPERVISOR",
+                        "especialidad":
+                            "ESPECIALIDAD",
+                        "grupo":
+                            "GRUPO",
+                        "inicio_plan":
+                            "INICIO PLAN",
+                        "fin_plan":
+                            "FIN PLAN",
+                        "personal":
+                            "PERSONAL",
+                        "hh_plan":
+                            "HH PLAN",
+                        "avance_real":
+                            "AVANCE (%)",
+                        "estado":
+                            "ESTADO"
+                    }
+                )
+
+                st.subheader(
+                    "Actividades de la OT"
+                )
+
+                st.dataframe(
+                    tabla_ot,
+                    use_container_width=True,
+                    hide_index=True,
+                    height=450
+                )
+
+                # ============================================
+                # ACTIVIDADES EN EJECUCIÓN
+                # ============================================
+
+                actividades_ejecucion = estado_ot[
+                    (
+                        estado_ot["avance_real"] > 0
+                    )
+                    &
+                    (
+                        estado_ot["avance_real"] < 100
+                    )
+                ]
+
+                if not actividades_ejecucion.empty:
+
+                    st.subheader(
+                        "Actividades actualmente en ejecución"
+                    )
+
+                    for _, actividad_actual in (
+                        actividades_ejecucion.iterrows()
+                    ):
+
+                        with st.expander(
+                            f"{actividad_actual.get('codigo_actividad', '')} "
+                            f"- {actividad_actual.get('descripcion', '')}"
+                        ):
+
+                            x1, x2, x3 = st.columns(3)
+
+                            with x1:
+
+                                st.metric(
+                                    "Avance",
+                                    f"{float(actividad_actual.get('avance_real', 0)):.1f}%"
+                                )
+
+                            with x2:
+
+                                st.write(
+                                    "**Supervisor:**"
+                                )
+
+                                st.write(
+                                    actividad_actual.get(
+                                        "supervisor"
+                                    )
+                                    or "-"
+                                )
+
+                            with x3:
+
+                                st.write(
+                                    "**Grupo:**"
+                                )
+
+                                st.write(
+                                    actividad_actual.get(
+                                        "grupo"
+                                    )
+                                    or "-"
+                                )
+
+                            descripcion_ultimo = (
+                                actividad_actual.get(
+                                    "descripcion_avance"
+                                )
+                                or actividad_actual.get(
+                                    "descripcion_avance_ultimo"
+                                )
+                            )
+
+                            if descripcion_ultimo:
+
+                                st.write(
+                                    "**Último avance reportado:**"
+                                )
+
+                                st.write(
+                                    descripcion_ultimo
+                                )
+
+                            observacion_ultima = (
+                                actividad_actual.get(
+                                    "observaciones"
+                                )
+                                or actividad_actual.get(
+                                    "observaciones_ultimo"
+                                )
+                            )
+
+                            if observacion_ultima:
+
+                                st.write(
+                                    "**Observaciones:**"
+                                )
+
+                                st.write(
+                                    observacion_ultima
+                                )
 
     # =====================================================
     # EVIDENCIAS
