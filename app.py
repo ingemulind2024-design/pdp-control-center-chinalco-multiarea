@@ -817,13 +817,13 @@ else:
 
     if pagina == "Dashboard":
 
-            st.subheader(f"Dashboard - {nombre_area}")
+        st.subheader(f"Dashboard - {nombre_area}")
 
-            st.success(
-                f"Visualización exclusiva del área {nombre_area}."
-            )
+        st.success(
+            f"Visualización exclusiva del área {nombre_area}."
+        )
 
-            total_ots = len(ots_area)
+        total_ots = len(ots_area)
 
         # ============================================
         # ACTIVIDADES DEL ÁREA
@@ -875,8 +875,8 @@ else:
         else:
             st.warning(
                 "No existen actividades cargadas para esta área."
-            )
-
+            )    
+    
     # =====================================================
     # REGISTRAR AVANCE
     # =====================================================
