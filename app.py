@@ -95,8 +95,553 @@ def limpiar_fecha(valor):
         return None
 
 # =====================================================
-# INTERFAZ DE PRUEBA
+# FUNCIONES DEL DASHBOARD
 # =====================================================
+
+def latest_progress(progress: pd.DataFrame) -> pd.DataFrame:
+    if progress.empty:
+        return pd.DataFrame(
+            columns=["actividad_id", "avance"]
+        )
+
+    data = progress.copy()
+
+    data["fecha_registro"] = pd.to_datetime(
+        data["fecha_registro"],
+        errors="coerce",
+        utc=True
+    )
+
+    return (
+        data
+        .sort_values("fecha_registro")
+        .groupby("actividad_id", as_index=False)
+        .tail(1)
+    )
+
+
+def build_activity_status(
+    activities: pd.DataFrame,
+    progress: pd.DataFrame
+) -> pd.DataFrame:
+
+    if activities.empty:
+        return activities.copy()
+
+    latest = latest_progress(progress)
+
+    if latest.empty:
+        result = activities.copy()
+        result["avance_real"] = 0.0
+
+    else:
+        columnas_avance = [
+            "actividad_id",
+            "avance",
+            "descripcion_avance",
+            "observaciones",
+            "fecha_registro"
+        ]
+
+        columnas_disponibles = [
+            c for c in columnas_avance
+            if c in latest.columns
+        ]
+
+        result = activities.merge(
+            latest[columnas_disponibles],
+            left_on="id",
+            right_on="actividad_id",
+            how="left"
+        )
+
+        result["avance_real"] = pd.to_numeric(
+            result.get("avance", 0),
+            errors="coerce"
+        ).fillna(0)
+
+    if "peso" not in result.columns:
+        result["peso"] = 1.0
+
+    result["peso"] = pd.to_numeric(
+        result["peso"],
+        errors="coerce"
+    ).fillna(1)
+
+    return result
+
+
+def weighted_progress(
+    activity_status: pd.DataFrame
+) -> float:
+
+    if activity_status.empty:
+        return 0.0
+
+    denominator = activity_status["peso"].sum()
+
+    if denominator <= 0:
+        return float(
+            activity_status["avance_real"].mean()
+        )
+
+    return float(
+        (
+            activity_status["avance_real"]
+            * activity_status["peso"]
+        ).sum()
+        / denominator
+    )
+
+
+def compute_kpis(
+    activities: pd.DataFrame,
+    progress: pd.DataFrame
+) -> dict:
+
+    status = build_activity_status(
+        activities,
+        progress
+    )
+
+    if status.empty:
+        return {
+            "avance_general": 0.0,
+            "actividades": 0,
+            "culminadas": 0,
+            "parciales": 0,
+            "no_iniciadas": 0,
+            "pendientes": 0,
+            "spi": 0.0,
+            "hh_plan": 0.0,
+            "hh_ganadas": 0.0
+        }
+
+    avance_general = weighted_progress(status)
+
+    culminadas = int(
+        (status["avance_real"] >= 100).sum()
+    )
+
+    parciales = int(
+        (
+            (status["avance_real"] > 0)
+            & (status["avance_real"] < 100)
+        ).sum()
+    )
+
+    no_iniciadas = int(
+        (status["avance_real"] <= 0).sum()
+    )
+
+    pendientes = int(
+        (status["avance_real"] < 100).sum()
+    )
+
+    if "hh_plan" in status.columns:
+        hh_plan_series = pd.to_numeric(
+            status["hh_plan"],
+            errors="coerce"
+        ).fillna(0)
+    else:
+        hh_plan_series = pd.Series(
+            0.0,
+            index=status.index
+        )
+
+    hh_plan = float(
+        hh_plan_series.sum()
+    )
+
+    hh_ganadas = float(
+        (
+            hh_plan_series
+            * status["avance_real"]
+            / 100
+        ).sum()
+    )
+
+    inicio = pd.to_datetime(
+        status.get("inicio_plan"),
+        errors="coerce"
+    )
+
+    fin = pd.to_datetime(
+        status.get("fin_plan"),
+        errors="coerce"
+    )
+
+    ahora = pd.Timestamp.now()
+
+    avance_plan = []
+
+    for fecha_inicio, fecha_fin in zip(
+        inicio,
+        fin
+    ):
+
+        if pd.isna(fecha_inicio) or pd.isna(fecha_fin):
+            avance_plan.append(0)
+            continue
+
+        if ahora <= fecha_inicio:
+            avance_plan.append(0)
+
+        elif ahora >= fecha_fin:
+            avance_plan.append(100)
+
+        else:
+            duracion = (
+                fecha_fin - fecha_inicio
+            ).total_seconds()
+
+            transcurrido = (
+                ahora - fecha_inicio
+            ).total_seconds()
+
+            porcentaje = (
+                transcurrido / duracion * 100
+                if duracion > 0
+                else 100
+            )
+
+            avance_plan.append(
+                max(0, min(100, porcentaje))
+            )
+
+    status["avance_plan"] = avance_plan
+
+    peso_total = status["peso"].sum()
+
+    if peso_total > 0:
+        plan_actual = float(
+            (
+                status["avance_plan"]
+                * status["peso"]
+            ).sum()
+            / peso_total
+        )
+    else:
+        plan_actual = 0.0
+
+    spi = (
+        avance_general / plan_actual
+        if plan_actual > 0
+        else 0.0
+    )
+
+    return {
+        "avance_general": avance_general,
+        "avance_plan": plan_actual,
+        "actividades": len(status),
+        "culminadas": culminadas,
+        "parciales": parciales,
+        "no_iniciadas": no_iniciadas,
+        "pendientes": pendientes,
+        "spi": spi,
+        "hh_plan": hh_plan,
+        "hh_ganadas": hh_ganadas
+    }
+
+
+def build_s_curve(
+    activities: pd.DataFrame,
+    progress: pd.DataFrame
+) -> pd.DataFrame:
+
+    if activities.empty:
+        return pd.DataFrame(
+            columns=["fecha", "PLAN", "REAL"]
+        )
+
+    acts = activities.copy()
+
+    acts["inicio_plan"] = pd.to_datetime(
+        acts["inicio_plan"],
+        errors="coerce"
+    )
+
+    acts["fin_plan"] = pd.to_datetime(
+        acts["fin_plan"],
+        errors="coerce"
+    )
+
+    valid = acts.dropna(
+        subset=[
+            "id",
+            "inicio_plan",
+            "fin_plan"
+        ]
+    ).copy()
+
+    if valid.empty:
+        return pd.DataFrame(
+            columns=["fecha", "PLAN", "REAL"]
+        )
+
+    invalidas = (
+        valid["fin_plan"]
+        <= valid["inicio_plan"]
+    )
+
+    valid.loc[
+        invalidas,
+        "fin_plan"
+    ] = (
+        valid.loc[
+            invalidas,
+            "inicio_plan"
+        ]
+        + pd.Timedelta(minutes=1)
+    )
+
+    inicio_programa = (
+        valid["inicio_plan"].min()
+    )
+
+    fin_programa = (
+        valid["fin_plan"].max()
+    )
+
+    cortes = [inicio_programa]
+
+    dia = inicio_programa.normalize()
+    dia_final = fin_programa.normalize()
+
+    horas_corte = [0, 7, 14, 19]
+
+    while dia <= dia_final:
+
+        for hora in horas_corte:
+
+            corte = (
+                dia
+                + pd.Timedelta(hours=hora)
+            )
+
+            if (
+                inicio_programa
+                < corte
+                < fin_programa
+            ):
+                cortes.append(corte)
+
+        dia += pd.Timedelta(days=1)
+
+    cortes.append(fin_programa)
+
+    cortes = sorted(
+        pd.Series(cortes)
+        .drop_duplicates()
+        .tolist()
+    )
+
+    total_actividades = len(valid)
+
+    plan_values = []
+
+    for corte in cortes:
+
+        suma_plan = 0.0
+
+        for _, actividad in valid.iterrows():
+
+            inicio_act = (
+                actividad["inicio_plan"]
+            )
+
+            fin_act = (
+                actividad["fin_plan"]
+            )
+
+            if corte <= inicio_act:
+                avance = 0.0
+
+            elif corte >= fin_act:
+                avance = 100.0
+
+            else:
+                duracion = (
+                    fin_act - inicio_act
+                ).total_seconds()
+
+                transcurrido = (
+                    corte - inicio_act
+                ).total_seconds()
+
+                avance = (
+                    transcurrido
+                    / duracion
+                    * 100
+                    if duracion > 0
+                    else 100
+                )
+
+            suma_plan += max(
+                0,
+                min(100, avance)
+            )
+
+        plan_values.append(
+            suma_plan
+            / total_actividades
+        )
+
+    prog = progress.copy()
+
+    if not prog.empty:
+
+        prog["fecha_registro"] = pd.to_datetime(
+            prog["fecha_registro"],
+            errors="coerce",
+            utc=True
+        ).dt.tz_localize(None)
+
+        prog["avance"] = pd.to_numeric(
+            prog["avance"],
+            errors="coerce"
+        ).fillna(0).clip(0, 100)
+
+        prog = prog.dropna(
+            subset=[
+                "actividad_id",
+                "fecha_registro"
+            ]
+        )
+
+    real_values = []
+
+    ids_actividades = (
+        valid["id"].tolist()
+    )
+
+    ultima_fecha_real = (
+        prog["fecha_registro"].max()
+        if not prog.empty
+        else None
+    )
+
+    for corte in cortes:
+
+        if prog.empty:
+
+            real_values.append(
+                0.0
+                if corte == inicio_programa
+                else None
+            )
+
+            continue
+
+        if (
+            ultima_fecha_real is not None
+            and corte > ultima_fecha_real
+        ):
+            real_values.append(None)
+            continue
+
+        disponibles = prog[
+            prog["fecha_registro"] <= corte
+        ]
+
+        if disponibles.empty:
+
+            real_values.append(0.0)
+            continue
+
+        ultimos = (
+            disponibles
+            .sort_values("fecha_registro")
+            .groupby(
+                "actividad_id",
+                as_index=False
+            )
+            .tail(1)
+            .set_index("actividad_id")[
+                "avance"
+            ]
+            .to_dict()
+        )
+
+        suma_real = sum(
+            float(
+                ultimos.get(
+                    actividad_id,
+                    0
+                )
+            )
+            for actividad_id
+            in ids_actividades
+        )
+
+        real_values.append(
+            suma_real
+            / total_actividades
+        )
+
+    curva = pd.DataFrame({
+        "fecha": pd.to_datetime(cortes),
+        "PLAN": plan_values,
+        "REAL": real_values
+    })
+
+    curva["PLAN"] = (
+        pd.to_numeric(
+            curva["PLAN"],
+            errors="coerce"
+        )
+        .fillna(0)
+        .clip(0, 100)
+        .cummax()
+    )
+
+    indices_real = (
+        curva.index[
+            curva["REAL"].notna()
+        ]
+        .tolist()
+    )
+
+    if indices_real:
+
+        curva.loc[
+            indices_real,
+            "REAL"
+        ] = (
+            pd.to_numeric(
+                curva.loc[
+                    indices_real,
+                    "REAL"
+                ],
+                errors="coerce"
+            )
+            .fillna(0)
+            .clip(0, 100)
+            .cummax()
+        )
+
+    curva.loc[
+        curva.index[0],
+        "PLAN"
+    ] = 0.0
+
+    curva.loc[
+        curva.index[-1],
+        "PLAN"
+    ] = 100.0
+
+    if pd.isna(
+        curva.loc[
+            curva.index[0],
+            "REAL"
+        ]
+    ):
+        curva.loc[
+            curva.index[0],
+            "REAL"
+        ] = 0.0
+
+    return curva
 
 # =====================================================
 # LOGIN Y CONTROL DE ACCESO
