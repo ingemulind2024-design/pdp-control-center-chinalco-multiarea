@@ -889,23 +889,227 @@ else:
             st.warning(
                 "Todavía no existen OTs cargadas para esta área."
             )
-        else:
-            lista_ots = [
-                f"{ot['ot']} - {ot.get('equipo') or 'Sin equipo'}"
-                for ot in ots_area
-            ]
 
-            st.selectbox(
+        else:
+
+            # ============================================
+            # SELECCIÓN DE OT
+            # ============================================
+
+            mapa_ots = {
+                f"{ot['ot']} - {ot.get('equipo') or 'Sin equipo'}": ot
+                for ot in ots_area
+            }
+
+            ot_texto = st.selectbox(
                 "Seleccione una OT",
-                lista_ots
+                list(mapa_ots.keys())
             )
+
+            ot_seleccionada = mapa_ots[ot_texto]
 
             st.info(
-                "En el siguiente paso conectaremos las actividades "
-                "de la OT seleccionada."
+                f"Equipo: {ot_seleccionada.get('equipo') or 'Sin equipo'}"
             )
 
+            # ============================================
+            # OBTENER ACTIVIDADES DE LA OT
+            # ============================================
 
+            actividades_resultado = (
+                supabase
+                .table("actividades")
+                .select(
+                    "id,codigo_actividad,descripcion,supervisor,"
+                    "especialidad,grupo,peso,inicio_plan,fin_plan,"
+                    "seccion,personal,duracion_h,hh_plan,critica,activo"
+                )
+                .eq("ot_id", ot_seleccionada["id"])
+                .eq("activo", True)
+                .order("codigo_actividad")
+                .execute()
+            )
+
+            actividades_ot = actividades_resultado.data or []
+
+            if not actividades_ot:
+
+                st.warning(
+                    "Esta OT no tiene actividades registradas."
+                )
+
+            else:
+
+                mapa_actividades = {
+                    f"{act['codigo_actividad']} - {act['descripcion']}": act
+                    for act in actividades_ot
+                }
+
+                actividad_texto = st.selectbox(
+                    "Seleccione una actividad",
+                    list(mapa_actividades.keys())
+                )
+
+                actividad = mapa_actividades[actividad_texto]
+
+                st.divider()
+
+                # ============================================
+                # DATOS PLANIFICADOS
+                # ============================================
+
+                c1, c2, c3, c4 = st.columns(4)
+
+                with c1:
+                    st.text_input(
+                        "Supervisor",
+                        value=str(actividad.get("supervisor") or ""),
+                        disabled=True
+                    )
+
+                with c2:
+                    st.text_input(
+                        "Especialidad",
+                        value=str(actividad.get("especialidad") or ""),
+                        disabled=True
+                    )
+
+                with c3:
+                    st.text_input(
+                        "Grupo",
+                        value=str(actividad.get("grupo") or ""),
+                        disabled=True
+                    )
+
+                with c4:
+                    st.text_input(
+                        "Sección",
+                        value=str(actividad.get("seccion") or ""),
+                        disabled=True
+                    )
+
+                c5, c6, c7, c8 = st.columns(4)
+
+                with c5:
+                    st.text_input(
+                        "Inicio planificado",
+                        value=str(actividad.get("inicio_plan") or ""),
+                        disabled=True
+                    )
+
+                with c6:
+                    st.text_input(
+                        "Fin planificado",
+                        value=str(actividad.get("fin_plan") or ""),
+                        disabled=True
+                    )
+
+                with c7:
+                    st.text_input(
+                        "Personal",
+                        value=str(actividad.get("personal") or ""),
+                        disabled=True
+                    )
+
+                with c8:
+                    st.text_input(
+                        "HH planificadas",
+                        value=str(actividad.get("hh_plan") or ""),
+                        disabled=True
+                    )
+
+                st.text_area(
+                    "Descripción de actividad",
+                    value=str(actividad.get("descripcion") or ""),
+                    disabled=True
+                )
+
+                st.divider()
+
+                # ============================================
+                # FORMULARIO DE AVANCE
+                # ============================================
+
+                avance = st.number_input(
+                    "Porcentaje de avance de la actividad (%)",
+                    min_value=0,
+                    max_value=100,
+                    value=0,
+                    step=5
+                )
+
+                tipo_evidencia = st.selectbox(
+                    "Tipo de evidencia",
+                    [
+                        "INICIO",
+                        "DURANTE",
+                        "FINAL"
+                    ]
+                )
+
+                critica = st.checkbox(
+                    "Marcar actividad como crítica"
+                )
+
+                descripcion_avance = st.text_area(
+                    "Descripción breve del avance realizado *"
+                )
+
+                observaciones = st.text_area(
+                    "Observaciones"
+                )
+
+                st.info(
+                    "En el siguiente paso conectaremos la carga "
+                    "de evidencias fotográficas."
+                )
+
+                guardar = st.button(
+                    "Guardar avance",
+                    type="primary",
+                    use_container_width=True
+                )
+
+                if guardar:
+
+                    if not descripcion_avance.strip():
+
+                        st.error(
+                            "Debe ingresar una descripción del avance."
+                        )
+
+                    else:
+
+                        try:
+
+                            payload = {
+                                "actividad_id": actividad["id"],
+                                "avance": avance,
+                                "descripcion_avance": descripcion_avance.strip(),
+                                "observaciones": observaciones.strip(),
+                                "tipo_evidencia": tipo_evidencia,
+                                "critica": critica,
+                                "evidencias": [],
+                                "usuario": usuario["username"]
+                            }
+
+                            (
+                                supabase
+                                .table("avances_actividad")
+                                .insert(payload)
+                                .execute()
+                            )
+
+                            st.success(
+                                "Avance registrado correctamente."
+                            )
+
+                        except Exception as exc:
+
+                            st.error(
+                                f"No fue posible guardar el avance: {exc}"
+                            )
+    
     # =====================================================
     # DETALLE POR OT
     # =====================================================
