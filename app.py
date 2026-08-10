@@ -3063,6 +3063,379 @@ if rol == "admin":
                                 errors="coerce"
                             ).fillna(0)
 
+
+                    # -----------------------------------------
+                    # SEMÁFOROS Y ALERTAS DE ATRASO
+                    # -----------------------------------------
+
+                    ahora_admin = pd.Timestamp.now()
+
+                    inicio_admin = pd.to_datetime(
+                        detalle_operativo_admin.get(
+                            "inicio_plan"
+                        ),
+                        errors="coerce"
+                    )
+
+                    fin_admin = pd.to_datetime(
+                        detalle_operativo_admin.get(
+                            "fin_plan"
+                        ),
+                        errors="coerce"
+                    )
+
+                    avance_real_admin = pd.to_numeric(
+                        detalle_operativo_admin.get(
+                            "avance_real",
+                            0
+                        ),
+                        errors="coerce"
+                    ).fillna(0)
+
+                    avance_plan_admin = []
+
+                    for fecha_inicio_admin, fecha_fin_admin in zip(
+                        inicio_admin,
+                        fin_admin
+                    ):
+
+                        if (
+                            pd.isna(fecha_inicio_admin)
+                            or pd.isna(fecha_fin_admin)
+                        ):
+                            avance_plan_admin.append(0.0)
+                            continue
+
+                        if (
+                            fecha_fin_admin
+                            <= fecha_inicio_admin
+                        ):
+                            fecha_fin_admin = (
+                                fecha_inicio_admin
+                                + pd.Timedelta(minutes=1)
+                            )
+
+                        if ahora_admin <= fecha_inicio_admin:
+
+                            plan_actividad_admin = 0.0
+
+                        elif ahora_admin >= fecha_fin_admin:
+
+                            plan_actividad_admin = 100.0
+
+                        else:
+
+                            duracion_admin = (
+                                fecha_fin_admin
+                                - fecha_inicio_admin
+                            ).total_seconds()
+
+                            transcurrido_admin = (
+                                ahora_admin
+                                - fecha_inicio_admin
+                            ).total_seconds()
+
+                            plan_actividad_admin = (
+                                (
+                                    transcurrido_admin
+                                    / duracion_admin
+                                )
+                                * 100
+                                if duracion_admin > 0
+                                else 100.0
+                            )
+
+                        avance_plan_admin.append(
+                            max(
+                                0.0,
+                                min(
+                                    100.0,
+                                    float(plan_actividad_admin)
+                                )
+                            )
+                        )
+
+                    detalle_operativo_admin[
+                        "PLAN ACTUAL (%)"
+                    ] = avance_plan_admin
+
+                    detalle_operativo_admin[
+                        "DESVIACIÓN (pp)"
+                    ] = (
+                        avance_real_admin
+                        - detalle_operativo_admin[
+                            "PLAN ACTUAL (%)"
+                        ]
+                    ).round(1)
+
+                    def clasificar_alerta_admin(fila):
+
+                        real = float(
+                            fila.get(
+                                "avance_real",
+                                0
+                            )
+                            or 0
+                        )
+
+                        plan = float(
+                            fila.get(
+                                "PLAN ACTUAL (%)",
+                                0
+                            )
+                            or 0
+                        )
+
+                        critica = bool(
+                            fila.get(
+                                "critica",
+                                False
+                            )
+                        )
+
+                        inicio = fila.get(
+                            "inicio_plan"
+                        )
+
+                        fin = fila.get(
+                            "fin_plan"
+                        )
+
+                        # Actividad terminada
+                        if real >= 100:
+                            return "🟢 CULMINADA"
+
+                        # Aún no debe iniciar
+                        if (
+                            pd.notna(inicio)
+                            and ahora_admin < pd.Timestamp(inicio)
+                        ):
+                            return (
+                                "🟣 CRÍTICA POR INICIAR"
+                                if critica
+                                else "⚪ POR INICIAR"
+                            )
+
+                        # Ya venció y no llegó a 100
+                        if (
+                            pd.notna(fin)
+                            and ahora_admin > pd.Timestamp(fin)
+                            and real < 100
+                        ):
+                            return (
+                                "🔴 CRÍTICA VENCIDA"
+                                if critica
+                                else "🔴 VENCIDA"
+                            )
+
+                        desviacion = real - plan
+
+                        if critica and desviacion < -10:
+                            return "🔴 CRÍTICA ATRASADA"
+
+                        if desviacion < -20:
+                            return "🔴 ATRASO CRÍTICO"
+
+                        if desviacion < -10:
+                            return "🟠 ATRASADA"
+
+                        if desviacion < -5:
+                            return "🟡 EN RIESGO"
+
+                        if real > 0:
+                            return "🟢 EN LÍNEA"
+
+                        return (
+                            "🟠 CRÍTICA SIN INICIAR"
+                            if critica
+                            else "🟡 SIN INICIAR"
+                        )
+
+                    detalle_operativo_admin[
+                        "ALERTA"
+                    ] = (
+                        detalle_operativo_admin
+                        .apply(
+                            clasificar_alerta_admin,
+                            axis=1
+                        )
+                    )
+
+                    prioridad_alerta_admin = {
+                        "🔴 CRÍTICA VENCIDA": 1,
+                        "🔴 CRÍTICA ATRASADA": 2,
+                        "🔴 ATRASO CRÍTICO": 3,
+                        "🔴 VENCIDA": 4,
+                        "🟠 CRÍTICA SIN INICIAR": 5,
+                        "🟠 ATRASADA": 6,
+                        "🟡 EN RIESGO": 7,
+                        "🟡 SIN INICIAR": 8,
+                        "🟣 CRÍTICA POR INICIAR": 9,
+                        "⚪ POR INICIAR": 10,
+                        "🟢 EN LÍNEA": 11,
+                        "🟢 CULMINADA": 12
+                    }
+
+                    detalle_operativo_admin[
+                        "_prioridad_alerta"
+                    ] = (
+                        detalle_operativo_admin[
+                            "ALERTA"
+                        ]
+                        .map(
+                            prioridad_alerta_admin
+                        )
+                        .fillna(99)
+                    )
+
+                    # -----------------------------------------
+                    # RESUMEN DE ALERTAS
+                    # -----------------------------------------
+
+                    alertas_rojas_admin = int(
+                        detalle_operativo_admin[
+                            "ALERTA"
+                        ]
+                        .astype(str)
+                        .str.startswith("🔴")
+                        .sum()
+                    )
+
+                    alertas_naranjas_admin = int(
+                        detalle_operativo_admin[
+                            "ALERTA"
+                        ]
+                        .astype(str)
+                        .str.startswith("🟠")
+                        .sum()
+                    )
+
+                    alertas_amarillas_admin = int(
+                        detalle_operativo_admin[
+                            "ALERTA"
+                        ]
+                        .astype(str)
+                        .str.startswith("🟡")
+                        .sum()
+                    )
+
+                    alertas_verdes_admin = int(
+                        detalle_operativo_admin[
+                            "ALERTA"
+                        ]
+                        .astype(str)
+                        .str.startswith("🟢")
+                        .sum()
+                    )
+
+                    al1, al2, al3, al4 = st.columns(4)
+
+                    with al1:
+                        st.metric(
+                            "🔴 Alertas rojas",
+                            alertas_rojas_admin
+                        )
+
+                    with al2:
+                        st.metric(
+                            "🟠 Alertas naranjas",
+                            alertas_naranjas_admin
+                        )
+
+                    with al3:
+                        st.metric(
+                            "🟡 Alertas amarillas",
+                            alertas_amarillas_admin
+                        )
+
+                    with al4:
+                        st.metric(
+                            "🟢 En línea / culminadas",
+                            alertas_verdes_admin
+                        )
+
+                    alertas_prioritarias_admin = (
+                        detalle_operativo_admin[
+                            detalle_operativo_admin[
+                                "_prioridad_alerta"
+                            ] <= 7
+                        ]
+                        .sort_values(
+                            [
+                                "_prioridad_alerta",
+                                "avance_real"
+                            ],
+                            ascending=[
+                                True,
+                                True
+                            ]
+                        )
+                        .copy()
+                    )
+
+                    if not alertas_prioritarias_admin.empty:
+
+                        st.markdown(
+                            "#### Alertas que requieren atención"
+                        )
+
+                        columnas_alertas_admin = [
+                            "ALERTA",
+                            "Área",
+                            "ot",
+                            "equipo",
+                            "codigo_actividad",
+                            "descripcion",
+                            "PLAN ACTUAL (%)",
+                            "avance_real",
+                            "DESVIACIÓN (pp)",
+                            "supervisor",
+                            "fin_plan"
+                        ]
+
+                        columnas_alertas_admin = [
+                            columna
+                            for columna
+                            in columnas_alertas_admin
+                            if columna
+                            in alertas_prioritarias_admin.columns
+                        ]
+
+                        tabla_alertas_admin = (
+                            alertas_prioritarias_admin[
+                                columnas_alertas_admin
+                            ]
+                            .head(20)
+                            .copy()
+                        )
+
+                        tabla_alertas_admin = (
+                            tabla_alertas_admin
+                            .rename(
+                                columns={
+                                    "ot": "OT",
+                                    "equipo": "EQUIPO",
+                                    "codigo_actividad":
+                                        "ACTIVIDAD",
+                                    "descripcion":
+                                        "DESCRIPCIÓN",
+                                    "avance_real":
+                                        "REAL (%)",
+                                    "supervisor":
+                                        "SUPERVISOR",
+                                    "fin_plan":
+                                        "FIN PLAN"
+                                }
+                            )
+                        )
+
+                        st.dataframe(
+                            tabla_alertas_admin,
+                            use_container_width=True,
+                            hide_index=True,
+                            height=360
+                        )
+
                     # -----------------------------------------
                     # KPIs rápidos de la vista operativa
                     # -----------------------------------------
@@ -3311,16 +3684,23 @@ if rol == "admin":
 
                     with filtro6:
 
-                        filtro_criticidad_operativa = (
+                        filtro_alerta_operativa = (
                             st.selectbox(
-                                "Criticidad",
+                                "Semáforo / Alerta",
                                 [
-                                    "TODAS",
-                                    "CRÍTICA",
-                                    "NORMAL"
-                                ],
+                                    "TODAS"
+                                ]
+                                + sorted(
+                                    detalle_operativo_admin[
+                                        "ALERTA"
+                                    ]
+                                    .dropna()
+                                    .astype(str)
+                                    .unique()
+                                    .tolist()
+                                ),
                                 key=(
-                                    "admin_operativo_criticidad"
+                                    "admin_operativo_alerta"
                                 )
                             )
                         )
@@ -3415,16 +3795,16 @@ if rol == "admin":
                         )
 
                     if (
-                        filtro_criticidad_operativa
+                        filtro_alerta_operativa
                         != "TODAS"
                     ):
 
                         detalle_filtrado_admin = (
                             detalle_filtrado_admin[
                                 detalle_filtrado_admin[
-                                    "CRITICIDAD"
+                                    "ALERTA"
                                 ]
-                                == filtro_criticidad_operativa
+                                == filtro_alerta_operativa
                             ]
                         )
 
@@ -3489,13 +3869,16 @@ if rol == "admin":
                     )
 
                     columnas_operativas_admin = [
+                        "ALERTA",
                         "Área",
                         "ot",
                         "equipo",
                         "codigo_actividad",
                         "descripcion",
                         "ESTADO",
+                        "PLAN ACTUAL (%)",
                         "avance_real",
+                        "DESVIACIÓN (pp)",
                         "CRITICIDAD",
                         "supervisor",
                         "especialidad",
@@ -3516,6 +3899,20 @@ if rol == "admin":
                         if columna
                         in detalle_filtrado_admin.columns
                     ]
+
+                    detalle_filtrado_admin = (
+                        detalle_filtrado_admin
+                        .sort_values(
+                            [
+                                "_prioridad_alerta",
+                                "avance_real"
+                            ],
+                            ascending=[
+                                True,
+                                True
+                            ]
+                        )
+                    )
 
                     tabla_operativa_admin = (
                         detalle_filtrado_admin[
