@@ -7239,7 +7239,8 @@ else:
 
                 actividad_texto = st.selectbox(
                     "Seleccione una actividad",
-                    list(mapa_actividades.keys())
+                    list(mapa_actividades.keys()),
+                    key=f"selector_actividad_ot_{ot_seleccionada['id']}"
                 )
 
                 actividad = mapa_actividades[actividad_texto]
@@ -7322,12 +7323,56 @@ else:
                 # FORMULARIO DE AVANCE
                 # ============================================
 
+                # Obtener el último avance GUARDADO de la actividad
+                # seleccionada. Así, al cambiar de actividad, el campo
+                # no hereda el porcentaje de la actividad anterior.
+                ultimo_avance_resultado = (
+                    supabase
+                    .table("avances_actividad")
+                    .select("avance,fecha_registro")
+                    .eq(
+                        "actividad_id",
+                        actividad["id"]
+                    )
+                    .order(
+                        "fecha_registro",
+                        desc=True
+                    )
+                    .limit(1)
+                    .execute()
+                )
+
+                ultimo_avance_data = (
+                    ultimo_avance_resultado.data
+                    or []
+                )
+
+                ultimo_avance_guardado = (
+                    int(
+                        float(
+                            ultimo_avance_data[0].get(
+                                "avance",
+                                0
+                            )
+                            or 0
+                        )
+                    )
+                    if ultimo_avance_data
+                    else 0
+                )
+
+                st.caption(
+                    f"Último avance registrado de esta actividad: "
+                    f"{ultimo_avance_guardado}%"
+                )
+
                 avance = st.number_input(
                     "Porcentaje de avance de la actividad (%)",
                     min_value=0,
                     max_value=100,
-                    value=0,
-                    step=5
+                    value=ultimo_avance_guardado,
+                    step=5,
+                    key=f"avance_actividad_{actividad['id']}"
                 )
 
                 tipo_evidencia = st.selectbox(
@@ -7336,25 +7381,30 @@ else:
                         "INICIO",
                         "DURANTE",
                         "FINAL"
-                    ]
+                    ],
+                    key=f"tipo_evidencia_{actividad['id']}"
                 )
 
                 critica = st.checkbox(
-                    "Marcar actividad como crítica"
+                    "Marcar actividad como crítica",
+                    key=f"critica_actividad_{actividad['id']}"
                 )
 
                 descripcion_avance = st.text_area(
-                    "Descripción breve del avance realizado *"
+                    "Descripción breve del avance realizado *",
+                    key=f"descripcion_avance_{actividad['id']}"
                 )
 
                 observaciones = st.text_area(
-                    "Observaciones"
+                    "Observaciones",
+                    key=f"observaciones_avance_{actividad['id']}"
                 )
 
                 archivos_evidencia = st.file_uploader(
                     "Evidencias fotográficas",
                     type=["jpg", "jpeg", "png", "webp"],
                     accept_multiple_files=True,
+                    key=f"evidencias_actividad_{actividad['id']}",
                     help=(
                         "Puede tomar fotografías desde el celular "
                         "o seleccionarlas desde la PC. "
