@@ -850,6 +850,332 @@ def build_s_curve(
 
     return curva
 
+
+# =====================================================
+# INFORME DIARIO AUTOMÁTICO
+# =====================================================
+
+def construir_resumen_diario(
+    ots: pd.DataFrame,
+    actividades: pd.DataFrame,
+    avances: pd.DataFrame,
+    nombre_area: str,
+    fecha_objetivo
+) -> str:
+
+    if actividades.empty:
+        return (
+            f"Informe diario - {nombre_area}\n\n"
+            "No existen actividades cargadas para esta área."
+        )
+
+    estado = build_activity_status(
+        actividades,
+        avances
+    )
+
+    kpis = compute_kpis(
+        actividades,
+        avances
+    )
+
+    if avances.empty:
+
+        diarios = pd.DataFrame()
+
+    else:
+
+        fechas_lima = pd.to_datetime(
+            avances["fecha_registro"],
+            errors="coerce",
+            utc=True
+        ).dt.tz_convert("America/Lima")
+
+        diarios = avances[
+            fechas_lima.dt.date == fecha_objetivo
+        ].copy()
+
+        if not diarios.empty:
+            diarios["fecha_lima"] = fechas_lima.loc[
+                diarios.index
+            ]
+
+    lineas = [
+        (
+            f"INFORME DIARIO DE CONTROL DE OTs - "
+            f"{nombre_area.upper()}"
+        ),
+        f"Fecha: {fecha_objetivo.strftime('%d/%m/%Y')}",
+        "",
+        "RESUMEN EJECUTIVO",
+        (
+            f"- OTs registradas: "
+            f"{ots['id'].nunique() if not ots.empty else 0}."
+        ),
+        (
+            f"- Actividades programadas: "
+            f"{kpis['actividades']}."
+        ),
+        (
+            f"- Avance general acumulado: "
+            f"{kpis['avance_general']:.1f}%."
+        ),
+        (
+            f"- Actividades culminadas: "
+            f"{kpis['culminadas']}."
+        ),
+        (
+            f"- Actividades en ejecución: "
+            f"{kpis['parciales']}."
+        ),
+        (
+            f"- Actividades no iniciadas: "
+            f"{kpis['no_iniciadas']}."
+        ),
+        (
+            f"- HH planificadas: "
+            f"{kpis['hh_plan']:.0f}."
+        ),
+        (
+            f"- HH ganadas: "
+            f"{kpis['hh_ganadas']:.0f}."
+        ),
+        (
+            f"- SPI: "
+            f"{kpis['spi']:.2f}."
+        ),
+        "",
+        (
+            f"REGISTROS REALIZADOS EL DÍA: "
+            f"{len(diarios)}"
+        )
+    ]
+
+    if diarios.empty:
+
+        lineas += [
+            "",
+            "No se registraron avances durante la fecha seleccionada."
+        ]
+
+    else:
+
+        actividad_lookup = (
+            actividades
+            .set_index("id")
+        )
+
+        ot_lookup = (
+            ots
+            .set_index("id")
+            if not ots.empty
+            else pd.DataFrame()
+        )
+
+        principales = diarios.sort_values(
+            "fecha_lima",
+            ascending=False
+        ).head(10)
+
+        lineas += [
+            "",
+            "PRINCIPALES ACTUALIZACIONES"
+        ]
+
+        for _, registro in principales.iterrows():
+
+            actividad_id = registro.get(
+                "actividad_id"
+            )
+
+            codigo = ""
+            descripcion_actividad = ""
+            ot_numero = ""
+            equipo = ""
+
+            if (
+                actividad_id in actividad_lookup.index
+            ):
+
+                actividad = actividad_lookup.loc[
+                    actividad_id
+                ]
+
+                codigo = str(
+                    actividad.get(
+                        "codigo_actividad",
+                        ""
+                    )
+                )
+
+                descripcion_actividad = str(
+                    actividad.get(
+                        "descripcion",
+                        ""
+                    )
+                )
+
+                ot_id = actividad.get(
+                    "ot_id"
+                )
+
+                if (
+                    not ot_lookup.empty
+                    and ot_id in ot_lookup.index
+                ):
+
+                    ot_info = ot_lookup.loc[
+                        ot_id
+                    ]
+
+                    ot_numero = str(
+                        ot_info.get(
+                            "ot",
+                            ""
+                        )
+                    )
+
+                    equipo = str(
+                        ot_info.get(
+                            "equipo",
+                            ""
+                        )
+                    )
+
+            hora = ""
+
+            fecha_registro = registro.get(
+                "fecha_lima"
+            )
+
+            if pd.notna(fecha_registro):
+                hora = fecha_registro.strftime(
+                    "%H:%M"
+                )
+
+            descripcion_reporte = (
+                registro.get(
+                    "descripcion_avance"
+                )
+                or descripcion_actividad
+                or ""
+            )
+
+            lineas.append(
+                f"- {hora} | OT {ot_numero} | "
+                f"{equipo} | {codigo} | "
+                f"{registro.get('avance', 0)}% | "
+                f"{descripcion_reporte}"
+            )
+
+        observaciones = (
+            diarios.get(
+                "observaciones",
+                pd.Series(
+                    dtype="object"
+                )
+            )
+            .fillna("")
+            .astype(str)
+        )
+
+        observaciones = [
+            texto.strip()
+            for texto in observaciones
+            if texto.strip()
+        ]
+
+        if observaciones:
+
+            lineas += [
+                "",
+                "OBSERVACIONES / RESTRICCIONES"
+            ]
+
+            for observacion in observaciones[:10]:
+                lineas.append(
+                    f"- {observacion}"
+                )
+
+        criticos = diarios[
+            diarios.get(
+                "critica",
+                False
+            ).fillna(False)
+            if "critica" in diarios.columns
+            else pd.Series(
+                False,
+                index=diarios.index
+            )
+        ]
+
+        if not criticos.empty:
+
+            lineas += [
+                "",
+                "ACTIVIDADES MARCADAS COMO CRÍTICAS"
+            ]
+
+            for _, registro in criticos.head(
+                10
+            ).iterrows():
+
+                actividad_id = registro.get(
+                    "actividad_id"
+                )
+
+                if (
+                    actividad_id
+                    in actividad_lookup.index
+                ):
+
+                    actividad = actividad_lookup.loc[
+                        actividad_id
+                    ]
+
+                    lineas.append(
+                        f"- "
+                        f"{actividad.get('codigo_actividad', '')}: "
+                        f"{registro.get('avance', 0)}% - "
+                        f"{registro.get('descripcion_avance', '')}"
+                    )
+
+    pendientes = estado[
+        estado["avance_real"] < 100
+    ].copy()
+
+    if not pendientes.empty:
+
+        pendientes = pendientes.sort_values(
+            [
+                "critica",
+                "avance_real"
+            ],
+            ascending=[
+                False,
+                True
+            ]
+        )
+
+        lineas += [
+            "",
+            "PENDIENTES PRINCIPALES"
+        ]
+
+        for _, actividad in pendientes.head(
+            10
+        ).iterrows():
+
+            lineas.append(
+                f"- "
+                f"{actividad.get('codigo_actividad', '')}: "
+                f"{actividad.get('descripcion', '')} | "
+                f"Avance {actividad.get('avance_real', 0):.1f}%"
+            )
+
+    return "\\n".join(lineas)
+
+
 # =====================================================
 # LOGIN Y CONTROL DE ACCESO
 # =====================================================
@@ -2569,27 +2895,6 @@ else:
                         "fotografía(s) seleccionada(s)."
                     )
 
-                    columnas_preview = st.columns(
-                        min(
-                            len(archivos_evidencia),
-                            4
-                        )
-                    )
-
-                    for indice, archivo_preview in enumerate(
-                        archivos_evidencia[:4]
-                    ):
-
-                        with columnas_preview[
-                            indice % len(columnas_preview)
-                        ]:
-
-                            st.image(
-                                archivo_preview,
-                                caption=archivo_preview.name,
-                                use_container_width=True
-                            )
-
                 guardar = st.button(
                     "Guardar avance",
                     type="primary",
@@ -3464,12 +3769,463 @@ else:
 
     elif pagina == "Informe diario":
 
-        st.subheader(f"Informe diario - {nombre_area}")
-
-        st.info(
-            "Aquí construiremos el resumen diario automático "
-            "del área."
+        st.subheader(
+            f"Informe diario - {nombre_area}"
         )
+
+        st.caption(
+            "Resumen automático de avances, restricciones, "
+            "actividades críticas y pendientes del área."
+        )
+
+        if not ots_area:
+
+            st.warning(
+                "Todavía no existen OTs cargadas para esta área."
+            )
+
+        else:
+
+            # =============================================
+            # CARGAR ACTIVIDADES DEL ÁREA
+            # =============================================
+
+            ids_ots_informe = [
+                ot["id"]
+                for ot in ots_area
+            ]
+
+            actividades_informe = (
+                supabase
+                .table("actividades")
+                .select(
+                    "id,ot_id,codigo_actividad,descripcion,"
+                    "supervisor,especialidad,grupo,peso,"
+                    "inicio_plan,fin_plan,seccion,personal,"
+                    "duracion_h,hh_plan,critica,activo"
+                )
+                .in_(
+                    "ot_id",
+                    ids_ots_informe
+                )
+                .eq(
+                    "activo",
+                    True
+                )
+                .execute()
+            ).data or []
+
+            if not actividades_informe:
+
+                st.warning(
+                    "No existen actividades cargadas para esta área."
+                )
+
+            else:
+
+                df_ots_informe = pd.DataFrame(
+                    ots_area
+                )
+
+                df_actividades_informe = pd.DataFrame(
+                    actividades_informe
+                )
+
+                ids_actividades_informe = (
+                    df_actividades_informe["id"]
+                    .dropna()
+                    .tolist()
+                )
+
+                avances_informe = (
+                    supabase
+                    .table("avances_actividad")
+                    .select(
+                        "id,actividad_id,avance,"
+                        "descripcion_avance,observaciones,"
+                        "tipo_evidencia,critica,evidencias,"
+                        "usuario,fecha_registro"
+                    )
+                    .in_(
+                        "actividad_id",
+                        ids_actividades_informe
+                    )
+                    .order(
+                        "fecha_registro",
+                        desc=True
+                    )
+                    .execute()
+                ).data or []
+
+                df_avances_informe = pd.DataFrame(
+                    avances_informe
+                )
+
+                fecha_hoy_lima = pd.Timestamp.now(
+                    tz="America/Lima"
+                ).date()
+
+                fecha_informe = st.date_input(
+                    "Fecha del informe",
+                    value=fecha_hoy_lima,
+                    key="fecha_informe_diario"
+                )
+
+                # =============================================
+                # KPIs DEL ÁREA
+                # =============================================
+
+                kpis_informe = compute_kpis(
+                    df_actividades_informe,
+                    df_avances_informe
+                )
+
+                i1, i2, i3, i4, i5, i6 = st.columns(
+                    6
+                )
+
+                with i1:
+                    st.metric(
+                        "OTs",
+                        len(df_ots_informe)
+                    )
+
+                with i2:
+                    st.metric(
+                        "Actividades",
+                        kpis_informe[
+                            "actividades"
+                        ]
+                    )
+
+                with i3:
+                    st.metric(
+                        "Avance general",
+                        f"{kpis_informe['avance_general']:.1f}%"
+                    )
+
+                with i4:
+                    st.metric(
+                        "Culminadas",
+                        kpis_informe[
+                            "culminadas"
+                        ]
+                    )
+
+                with i5:
+                    st.metric(
+                        "En ejecución",
+                        kpis_informe[
+                            "parciales"
+                        ]
+                    )
+
+                with i6:
+                    st.metric(
+                        "No iniciadas",
+                        kpis_informe[
+                            "no_iniciadas"
+                        ]
+                    )
+
+                st.divider()
+
+                # =============================================
+                # RESUMEN AUTOMÁTICO EDITABLE
+                # =============================================
+
+                resumen_informe = construir_resumen_diario(
+                    df_ots_informe,
+                    df_actividades_informe,
+                    df_avances_informe,
+                    nombre_area,
+                    fecha_informe
+                )
+
+                resumen_editado = st.text_area(
+                    "Resumen diario editable",
+                    value=resumen_informe,
+                    height=520,
+                    key=(
+                        "resumen_diario_"
+                        f"{codigo_area}_"
+                        f"{fecha_informe}"
+                    )
+                )
+
+                descarga1, descarga2 = st.columns(
+                    2
+                )
+
+                with descarga1:
+
+                    st.download_button(
+                        "Descargar informe diario en TXT",
+                        data=resumen_editado.encode(
+                            "utf-8"
+                        ),
+                        file_name=(
+                            f"informe_diario_"
+                            f"{codigo_area.lower()}_"
+                            f"{fecha_informe:%Y%m%d}.txt"
+                        ),
+                        mime="text/plain",
+                        use_container_width=True
+                    )
+
+                # =============================================
+                # REGISTROS DEL DÍA
+                # =============================================
+
+                if df_avances_informe.empty:
+
+                    diarios_informe = pd.DataFrame()
+
+                else:
+
+                    fechas_registro_lima = pd.to_datetime(
+                        df_avances_informe[
+                            "fecha_registro"
+                        ],
+                        errors="coerce",
+                        utc=True
+                    ).dt.tz_convert(
+                        "America/Lima"
+                    )
+
+                    diarios_informe = (
+                        df_avances_informe[
+                            fechas_registro_lima.dt.date
+                            == fecha_informe
+                        ]
+                        .copy()
+                    )
+
+                    if not diarios_informe.empty:
+                        diarios_informe[
+                            "fecha_lima"
+                        ] = (
+                            fechas_registro_lima.loc[
+                                diarios_informe.index
+                            ]
+                        )
+
+                with descarga2:
+
+                    if diarios_informe.empty:
+
+                        st.button(
+                            "Sin registros para exportar",
+                            disabled=True,
+                            use_container_width=True
+                        )
+
+                    else:
+
+                        export_diario = (
+                            diarios_informe
+                            .merge(
+                                df_actividades_informe[
+                                    [
+                                        "id",
+                                        "ot_id",
+                                        "codigo_actividad",
+                                        "descripcion",
+                                        "supervisor",
+                                        "especialidad",
+                                        "grupo"
+                                    ]
+                                ],
+                                left_on="actividad_id",
+                                right_on="id",
+                                how="left",
+                                suffixes=(
+                                    "",
+                                    "_actividad"
+                                )
+                            )
+                            .merge(
+                                df_ots_informe[
+                                    [
+                                        "id",
+                                        "ot",
+                                        "equipo"
+                                    ]
+                                ],
+                                left_on="ot_id",
+                                right_on="id",
+                                how="left",
+                                suffixes=(
+                                    "",
+                                    "_ot"
+                                )
+                            )
+                        )
+
+                        if (
+                            "fecha_lima"
+                            in export_diario.columns
+                        ):
+
+                            export_diario[
+                                "fecha_lima"
+                            ] = pd.to_datetime(
+                                export_diario[
+                                    "fecha_lima"
+                                ],
+                                errors="coerce"
+                            ).dt.tz_localize(
+                                None
+                            )
+
+                        buffer_excel = io.BytesIO()
+
+                        with pd.ExcelWriter(
+                            buffer_excel,
+                            engine="openpyxl"
+                        ) as writer:
+
+                            export_diario.to_excel(
+                                writer,
+                                index=False,
+                                sheet_name="Informe_Diario"
+                            )
+
+                        st.download_button(
+                            "Descargar detalle diario en Excel",
+                            data=buffer_excel.getvalue(),
+                            file_name=(
+                                f"detalle_diario_"
+                                f"{codigo_area.lower()}_"
+                                f"{fecha_informe:%Y%m%d}.xlsx"
+                            ),
+                            mime=(
+                                "application/vnd.openxmlformats-"
+                                "officedocument.spreadsheetml.sheet"
+                            ),
+                            use_container_width=True
+                        )
+
+                st.divider()
+
+                # =============================================
+                # TABLA DE REGISTROS DEL DÍA
+                # =============================================
+
+                st.subheader(
+                    "Registros de avance del día"
+                )
+
+                if diarios_informe.empty:
+
+                    st.info(
+                        "No existen avances registrados "
+                        "para la fecha seleccionada."
+                    )
+
+                else:
+
+                    detalle_diario = (
+                        diarios_informe
+                        .merge(
+                            df_actividades_informe[
+                                [
+                                    "id",
+                                    "ot_id",
+                                    "codigo_actividad",
+                                    "descripcion",
+                                    "supervisor",
+                                    "especialidad"
+                                ]
+                            ],
+                            left_on="actividad_id",
+                            right_on="id",
+                            how="left",
+                            suffixes=(
+                                "",
+                                "_actividad"
+                            )
+                        )
+                        .merge(
+                            df_ots_informe[
+                                [
+                                    "id",
+                                    "ot",
+                                    "equipo"
+                                ]
+                            ],
+                            left_on="ot_id",
+                            right_on="id",
+                            how="left",
+                            suffixes=(
+                                "",
+                                "_ot"
+                            )
+                        )
+                    )
+
+                    detalle_diario[
+                        "HORA"
+                    ] = pd.to_datetime(
+                        detalle_diario[
+                            "fecha_lima"
+                        ],
+                        errors="coerce"
+                    ).dt.strftime(
+                        "%H:%M"
+                    )
+
+                    columnas_diario = [
+                        "HORA",
+                        "ot",
+                        "equipo",
+                        "codigo_actividad",
+                        "descripcion",
+                        "avance",
+                        "tipo_evidencia",
+                        "descripcion_avance",
+                        "observaciones",
+                        "usuario"
+                    ]
+
+                    columnas_diario = [
+                        columna
+                        for columna in columnas_diario
+                        if columna
+                        in detalle_diario.columns
+                    ]
+
+                    tabla_diaria = detalle_diario[
+                        columnas_diario
+                    ].copy()
+
+                    tabla_diaria = tabla_diaria.rename(
+                        columns={
+                            "ot": "OT",
+                            "equipo": "EQUIPO",
+                            "codigo_actividad":
+                                "ACTIVIDAD",
+                            "descripcion":
+                                "DESCRIPCIÓN",
+                            "avance":
+                                "AVANCE (%)",
+                            "tipo_evidencia":
+                                "ETAPA",
+                            "descripcion_avance":
+                                "AVANCE REPORTADO",
+                            "observaciones":
+                                "OBSERVACIONES",
+                            "usuario":
+                                "USUARIO"
+                        }
+                    )
+
+                    st.dataframe(
+                        tabla_diaria,
+                        use_container_width=True,
+                        hide_index=True,
+                        height=420
+                    )
 
 
     # =====================================================
