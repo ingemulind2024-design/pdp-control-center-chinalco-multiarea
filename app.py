@@ -1173,7 +1173,229 @@ def construir_resumen_diario(
                 f"Avance {actividad.get('avance_real', 0):.1f}%"
             )
 
-    return "\\n".join(lineas)
+    return "\n".join(lineas)
+
+
+
+# =====================================================
+# SECCIONES EDITABLES DEL INFORME DIARIO
+# =====================================================
+
+def construir_secciones_informe_diario(
+    ots: pd.DataFrame,
+    actividades: pd.DataFrame,
+    avances: pd.DataFrame,
+    nombre_area: str,
+    fecha_objetivo
+) -> dict:
+
+    estado = build_activity_status(
+        actividades,
+        avances
+    )
+
+    kpis = compute_kpis(
+        actividades,
+        avances
+    )
+
+    # Avances de la fecha seleccionada
+    if avances.empty:
+        diarios = pd.DataFrame()
+    else:
+        fechas_lima = pd.to_datetime(
+            avances["fecha_registro"],
+            errors="coerce",
+            utc=True
+        ).dt.tz_convert("America/Lima")
+
+        diarios = avances[
+            fechas_lima.dt.date == fecha_objetivo
+        ].copy()
+
+        if not diarios.empty:
+            diarios["fecha_lima"] = fechas_lima.loc[
+                diarios.index
+            ]
+
+    # -------------------------------------------------
+    # RESUMEN EJECUTIVO
+    # -------------------------------------------------
+    resumen = (
+        f"OTs registradas: "
+        f"{ots['id'].nunique() if not ots.empty else 0}\n"
+        f"Actividades programadas: {kpis['actividades']}\n"
+        f"Avance general acumulado: {kpis['avance_general']:.1f}%\n"
+        f"Actividades culminadas: {kpis['culminadas']}\n"
+        f"Actividades en ejecución: {kpis['parciales']}\n"
+        f"Actividades no iniciadas: {kpis['no_iniciadas']}\n"
+        f"HH planificadas: {kpis['hh_plan']:.0f}\n"
+        f"HH ganadas: {kpis['hh_ganadas']:.0f}\n"
+        f"SPI: {kpis['spi']:.2f}"
+    )
+
+    # -------------------------------------------------
+    # PRINCIPALES ACTUALIZACIONES
+    # -------------------------------------------------
+    actualizaciones = []
+
+    if not diarios.empty:
+        actividad_lookup = actividades.set_index("id")
+        ot_lookup = (
+            ots.set_index("id")
+            if not ots.empty
+            else pd.DataFrame()
+        )
+
+        principales = diarios.sort_values(
+            "fecha_lima",
+            ascending=False
+        ).head(10)
+
+        for _, registro in principales.iterrows():
+
+            actividad_id = registro.get("actividad_id")
+            codigo = ""
+            ot_numero = ""
+            equipo = ""
+
+            if actividad_id in actividad_lookup.index:
+                actividad = actividad_lookup.loc[actividad_id]
+
+                codigo = str(
+                    actividad.get("codigo_actividad", "")
+                )
+
+                ot_id = actividad.get("ot_id")
+
+                if (
+                    not ot_lookup.empty
+                    and ot_id in ot_lookup.index
+                ):
+                    ot_info = ot_lookup.loc[ot_id]
+                    ot_numero = str(ot_info.get("ot", ""))
+                    equipo = str(ot_info.get("equipo", ""))
+
+            hora = ""
+            fecha_registro = registro.get("fecha_lima")
+
+            if pd.notna(fecha_registro):
+                hora = fecha_registro.strftime("%H:%M")
+
+            detalle = (
+                registro.get("descripcion_avance")
+                or ""
+            )
+
+            actualizaciones.append(
+                f"{hora} | OT {ot_numero} | {equipo} | "
+                f"{codigo} | {registro.get('avance', 0)}% | "
+                f"{detalle}"
+            )
+
+    if not actualizaciones:
+        actualizaciones = [
+            "No se registraron avances durante la fecha seleccionada."
+        ]
+
+    # -------------------------------------------------
+    # OBSERVACIONES / RESTRICCIONES
+    # -------------------------------------------------
+    observaciones = []
+
+    if not diarios.empty and "observaciones" in diarios.columns:
+        observaciones = [
+            str(valor).strip()
+            for valor in diarios["observaciones"].fillna("")
+            if str(valor).strip()
+        ]
+
+    if not observaciones:
+        observaciones = [
+            "Sin observaciones o restricciones registradas."
+        ]
+
+    # -------------------------------------------------
+    # ACTIVIDADES CRÍTICAS
+    # -------------------------------------------------
+    criticas = []
+
+    if not diarios.empty and "critica" in diarios.columns:
+        actividad_lookup = actividades.set_index("id")
+
+        for _, registro in diarios[
+            diarios["critica"].fillna(False)
+        ].head(10).iterrows():
+
+            actividad_id = registro.get("actividad_id")
+
+            if actividad_id in actividad_lookup.index:
+                actividad = actividad_lookup.loc[actividad_id]
+
+                criticas.append(
+                    f"{actividad.get('codigo_actividad', '')} | "
+                    f"{registro.get('avance', 0)}% | "
+                    f"{registro.get('descripcion_avance', '')}"
+                )
+
+    if not criticas:
+        criticas = [
+            "No se registraron actividades críticas en la fecha seleccionada."
+        ]
+
+    # -------------------------------------------------
+    # PENDIENTES PRINCIPALES
+    # -------------------------------------------------
+    pendientes = estado[
+        estado["avance_real"] < 100
+    ].copy()
+
+    pendientes_texto = []
+
+    if not pendientes.empty:
+
+        if "critica" in pendientes.columns:
+            pendientes["critica"] = (
+                pendientes["critica"]
+                .fillna(False)
+            )
+            pendientes = pendientes.sort_values(
+                ["critica", "avance_real"],
+                ascending=[False, True]
+            )
+        else:
+            pendientes = pendientes.sort_values(
+                "avance_real",
+                ascending=True
+            )
+
+        for _, actividad in pendientes.head(10).iterrows():
+            pendientes_texto.append(
+                f"{actividad.get('codigo_actividad', '')} | "
+                f"{actividad.get('descripcion', '')} | "
+                f"Avance {float(actividad.get('avance_real', 0)):.1f}%"
+            )
+
+    if not pendientes_texto:
+        pendientes_texto = [
+            "No existen actividades pendientes."
+        ]
+
+    return {
+        "resumen": resumen,
+        "actualizaciones": "\n".join(
+            f"• {item}" for item in actualizaciones
+        ),
+        "observaciones": "\n".join(
+            f"• {item}" for item in observaciones
+        ),
+        "criticas": "\n".join(
+            f"• {item}" for item in criticas
+        ),
+        "pendientes": "\n".join(
+            f"• {item}" for item in pendientes_texto
+        )
+    }
 
 
 # =====================================================
@@ -3931,10 +4153,10 @@ else:
                 st.divider()
 
                 # =============================================
-                # RESUMEN AUTOMÁTICO EDITABLE
+                # INFORME DIARIO POR SECCIONES EDITABLES
                 # =============================================
 
-                resumen_informe = construir_resumen_diario(
+                secciones = construir_secciones_informe_diario(
                     df_ots_informe,
                     df_actividades_informe,
                     df_avances_informe,
@@ -3942,15 +4164,100 @@ else:
                     fecha_informe
                 )
 
+                st.subheader("Resumen ejecutivo")
+
                 resumen_editado = st.text_area(
-                    "Resumen diario editable",
-                    value=resumen_informe,
-                    height=520,
+                    "Editar resumen ejecutivo",
+                    value=secciones["resumen"],
+                    height=250,
                     key=(
-                        "resumen_diario_"
+                        "resumen_ejecutivo_"
                         f"{codigo_area}_"
                         f"{fecha_informe}"
+                    ),
+                    label_visibility="collapsed"
+                )
+
+                st.subheader("Principales actualizaciones")
+
+                actualizaciones_editadas = st.text_area(
+                    "Editar principales actualizaciones",
+                    value=secciones["actualizaciones"],
+                    height=230,
+                    key=(
+                        "actualizaciones_diarias_"
+                        f"{codigo_area}_"
+                        f"{fecha_informe}"
+                    ),
+                    label_visibility="collapsed"
+                )
+
+                col_obs, col_crit = st.columns(2)
+
+                with col_obs:
+
+                    st.subheader(
+                        "Observaciones / Restricciones"
                     )
+
+                    observaciones_editadas = st.text_area(
+                        "Editar observaciones y restricciones",
+                        value=secciones["observaciones"],
+                        height=220,
+                        key=(
+                            "observaciones_diarias_"
+                            f"{codigo_area}_"
+                            f"{fecha_informe}"
+                        ),
+                        label_visibility="collapsed"
+                    )
+
+                with col_crit:
+
+                    st.subheader(
+                        "Actividades críticas"
+                    )
+
+                    criticas_editadas = st.text_area(
+                        "Editar actividades críticas",
+                        value=secciones["criticas"],
+                        height=220,
+                        key=(
+                            "criticas_diarias_"
+                            f"{codigo_area}_"
+                            f"{fecha_informe}"
+                        ),
+                        label_visibility="collapsed"
+                    )
+
+                st.subheader("Pendientes principales")
+
+                pendientes_editados = st.text_area(
+                    "Editar pendientes principales",
+                    value=secciones["pendientes"],
+                    height=260,
+                    key=(
+                        "pendientes_diarios_"
+                        f"{codigo_area}_"
+                        f"{fecha_informe}"
+                    ),
+                    label_visibility="collapsed"
+                )
+
+                informe_final = (
+                    f"INFORME DIARIO DE CONTROL DE OTs - "
+                    f"{nombre_area.upper()}\n"
+                    f"Fecha: {fecha_informe.strftime('%d/%m/%Y')}\n\n"
+                    "RESUMEN EJECUTIVO\n"
+                    f"{resumen_editado}\n\n"
+                    "PRINCIPALES ACTUALIZACIONES\n"
+                    f"{actualizaciones_editadas}\n\n"
+                    "OBSERVACIONES / RESTRICCIONES\n"
+                    f"{observaciones_editadas}\n\n"
+                    "ACTIVIDADES CRÍTICAS\n"
+                    f"{criticas_editadas}\n\n"
+                    "PENDIENTES PRINCIPALES\n"
+                    f"{pendientes_editados}"
                 )
 
                 descarga1, descarga2 = st.columns(
@@ -3961,7 +4268,7 @@ else:
 
                     st.download_button(
                         "Descargar informe diario en TXT",
-                        data=resumen_editado.encode(
+                        data=informe_final.encode(
                             "utf-8"
                         ),
                         file_name=(
