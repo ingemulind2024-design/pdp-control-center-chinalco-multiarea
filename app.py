@@ -817,31 +817,31 @@ else:
 
     if pagina == "Dashboard":
 
-        st.subheader(f"Dashboard - {nombre_area}")
+            st.subheader(f"Dashboard - {nombre_area}")
 
-        st.success(
-            f"Visualización exclusiva del área {nombre_area}."
-        )
+            st.success(
+                f"Visualización exclusiva del área {nombre_area}."
+            )
 
-        total_ots = len(ots_area)
+            total_ots = len(ots_area)
 
-    # ==========================================
-    # ACTIVIDADES DEL ÁREA
-    # ==========================================
+        # ============================================
+        # ACTIVIDADES DEL ÁREA
+        # ============================================
 
-    ot_ids = [ot["id"] for ot in ots_area]
+        ot_ids = [ot["id"] for ot in ots_area]
 
-    if ot_ids:
-        actividades_area = (
-            supabase
-            .table("actividades")
-            .select("id,ot_id,peso")
-            .in_("ot_id", ot_ids)
-            .eq("activo", True)
-            .execute()
-        ).data or []
-    else:
-         actividades_area = []
+        if ot_ids:
+            actividades_area = (
+                supabase
+                .table("actividades")
+                .select("id,ot_id,peso")
+                .in_("ot_id", ot_ids)
+                .eq("activo", True)
+                .execute()
+            ).data or []
+        else:
+            actividades_area = []
 
         total_actividades = len(actividades_area)
 
@@ -850,7 +850,7 @@ else:
 
         # Todavía no existen avances registrados
         avance_general = 0
- 
+
         col1, col2, col3, col4 = st.columns(4)
 
         with col1:
@@ -871,11 +871,11 @@ else:
             st.success(
                 f"Planificación cargada correctamente: "
                 f"{total_ots} OTs y {total_actividades} actividades."
-         )
-else:
-    st.warning(
-        "No existen actividades cargadas para esta área."
-    )
+            )
+        else:
+            st.warning(
+                "No existen actividades cargadas para esta área."
+            )
 
     # =====================================================
     # REGISTRAR AVANCE
