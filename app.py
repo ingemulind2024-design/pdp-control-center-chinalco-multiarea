@@ -9,6 +9,19 @@ import plotly.graph_objects as go
 
 from PIL import Image, ImageOps
 from datetime import datetime, timezone
+
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_CENTER
+from reportlab.platypus import (
+    SimpleDocTemplate,
+    Paragraph,
+    Spacer,
+    Table,
+    TableStyle
+)
+
 from supabase import create_client
 
 st.set_page_config(
@@ -1396,6 +1409,525 @@ def construir_secciones_informe_diario(
             f"• {item}" for item in pendientes_texto
         )
     }
+
+
+
+# =====================================================
+# REPORTE PDF EJECUTIVO POR ÁREA
+# =====================================================
+
+def construir_pdf_ejecutivo_area(
+    ots: pd.DataFrame,
+    actividades: pd.DataFrame,
+    avances: pd.DataFrame,
+    nombre_area: str
+) -> bytes:
+
+    buffer = io.BytesIO()
+
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=28,
+        leftMargin=28,
+        topMargin=30,
+        bottomMargin=28
+    )
+
+    styles = getSampleStyleSheet()
+
+    estilo_titulo = ParagraphStyle(
+        "TituloMainin",
+        parent=styles["Title"],
+        fontName="Helvetica-Bold",
+        fontSize=18,
+        leading=22,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#082D55"),
+        spaceAfter=8
+    )
+
+    estilo_subtitulo = ParagraphStyle(
+        "SubtituloMainin",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=9,
+        leading=12,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#667085"),
+        spaceAfter=14
+    )
+
+    estilo_h2 = ParagraphStyle(
+        "H2Mainin",
+        parent=styles["Heading2"],
+        fontName="Helvetica-Bold",
+        fontSize=12,
+        leading=15,
+        textColor=colors.HexColor("#082D55"),
+        spaceBefore=8,
+        spaceAfter=8
+    )
+
+    story = []
+
+    story.append(
+        Paragraph(
+            "PDP CONTROL CENTER CHINALCO - MAININ",
+            estilo_titulo
+        )
+    )
+
+    story.append(
+        Paragraph(
+            f"Informe Ejecutivo - {nombre_area}",
+            estilo_subtitulo
+        )
+    )
+
+    story.append(
+        Paragraph(
+            f"Fecha de emisión: "
+            f"{datetime.now():%d/%m/%Y %H:%M}",
+            styles["Normal"]
+        )
+    )
+
+    story.append(Spacer(1, 12))
+
+    kpis = compute_kpis(
+        actividades,
+        avances
+    )
+
+    total_ots = (
+        int(ots["id"].nunique())
+        if not ots.empty and "id" in ots.columns
+        else 0
+    )
+
+    resumen_data = [
+        ["Indicador", "Valor"],
+        ["OTs", str(total_ots)],
+        ["Actividades", str(kpis["actividades"])],
+        [
+            "Avance general",
+            f"{kpis['avance_general']:.1f}%"
+        ],
+        [
+            "SPI",
+            f"{kpis['spi']:.2f}"
+        ],
+        [
+            "HH planificadas",
+            f"{kpis['hh_plan']:.0f}"
+        ],
+        [
+            "HH ganadas",
+            f"{kpis['hh_ganadas']:.0f}"
+        ],
+        [
+            "Culminadas",
+            str(kpis["culminadas"])
+        ],
+        [
+            "En ejecución",
+            str(kpis["parciales"])
+        ],
+        [
+            "No iniciadas",
+            str(kpis["no_iniciadas"])
+        ]
+    ]
+
+    tabla_resumen = Table(
+        resumen_data,
+        colWidths=[240, 160]
+    )
+
+    tabla_resumen.setStyle(
+        TableStyle([
+            (
+                "BACKGROUND",
+                (0, 0),
+                (-1, 0),
+                colors.HexColor("#082D55")
+            ),
+            (
+                "TEXTCOLOR",
+                (0, 0),
+                (-1, 0),
+                colors.white
+            ),
+            (
+                "FONTNAME",
+                (0, 0),
+                (-1, 0),
+                "Helvetica-Bold"
+            ),
+            (
+                "ALIGN",
+                (1, 1),
+                (1, -1),
+                "CENTER"
+            ),
+            (
+                "GRID",
+                (0, 0),
+                (-1, -1),
+                0.5,
+                colors.HexColor("#D0D5DD")
+            ),
+            (
+                "ROWBACKGROUNDS",
+                (0, 1),
+                (-1, -1),
+                [
+                    colors.white,
+                    colors.HexColor("#F3F6F9")
+                ]
+            ),
+            (
+                "VALIGN",
+                (0, 0),
+                (-1, -1),
+                "MIDDLE"
+            ),
+            (
+                "BOTTOMPADDING",
+                (0, 0),
+                (-1, -1),
+                6
+            ),
+            (
+                "TOPPADDING",
+                (0, 0),
+                (-1, -1),
+                6
+            )
+        ])
+    )
+
+    story.append(
+        Paragraph(
+            "Indicadores principales",
+            estilo_h2
+        )
+    )
+
+    story.append(tabla_resumen)
+    story.append(Spacer(1, 16))
+
+    if not avances.empty:
+
+        story.append(
+            Paragraph(
+                "Resumen de avances",
+                estilo_h2
+            )
+        )
+
+        fecha_hoy = pd.Timestamp.now(
+            tz="America/Lima"
+        ).date()
+
+        secciones = construir_secciones_informe_diario(
+            ots,
+            actividades,
+            avances,
+            nombre_area,
+            fecha_hoy
+        )
+
+        for titulo, clave in [
+            (
+                "Resumen ejecutivo",
+                "resumen"
+            ),
+            (
+                "Principales actualizaciones",
+                "actualizaciones"
+            ),
+            (
+                "Observaciones / Restricciones",
+                "observaciones"
+            ),
+            (
+                "Actividades críticas",
+                "criticas"
+            ),
+            (
+                "Pendientes principales",
+                "pendientes"
+            )
+        ]:
+
+            story.append(
+                Paragraph(
+                    titulo,
+                    styles["Heading3"]
+                )
+            )
+
+            contenido = (
+                secciones.get(clave, "")
+                or ""
+            )
+
+            for linea in contenido.splitlines():
+
+                if linea.strip():
+
+                    linea_segura = (
+                        linea
+                        .replace("&", "&amp;")
+                        .replace("<", "&lt;")
+                        .replace(">", "&gt;")
+                    )
+
+                    story.append(
+                        Paragraph(
+                            linea_segura,
+                            styles["BodyText"]
+                        )
+                    )
+
+                else:
+                    story.append(
+                        Spacer(1, 4)
+                    )
+
+            story.append(
+                Spacer(1, 6)
+            )
+
+    story.append(
+        Paragraph(
+            "Detalle por OT",
+            estilo_h2
+        )
+    )
+
+    estado = build_activity_status(
+        actividades,
+        avances
+    )
+
+    if (
+        not estado.empty
+        and not ots.empty
+        and "ot_id" in estado.columns
+    ):
+
+        detalle_ot = (
+            estado
+            .groupby(
+                "ot_id",
+                dropna=False
+            )
+            .agg(
+                actividades=("id", "count"),
+                culminadas=(
+                    "avance_real",
+                    lambda serie: int(
+                        (serie >= 100).sum()
+                    )
+                ),
+                en_ejecucion=(
+                    "avance_real",
+                    lambda serie: int(
+                        (
+                            (serie > 0)
+                            & (serie < 100)
+                        ).sum()
+                    )
+                ),
+                no_iniciadas=(
+                    "avance_real",
+                    lambda serie: int(
+                        (serie <= 0).sum()
+                    )
+                ),
+                avance_ot=(
+                    "avance_real",
+                    "mean"
+                )
+            )
+            .reset_index()
+            .merge(
+                ots[
+                    [
+                        "id",
+                        "ot",
+                        "equipo"
+                    ]
+                ],
+                left_on="ot_id",
+                right_on="id",
+                how="left"
+            )
+        )
+
+        tabla_ot_data = [
+            [
+                "OT",
+                "Equipo",
+                "Act.",
+                "Avance",
+                "Culm.",
+                "Ejec.",
+                "No inic."
+            ]
+        ]
+
+        for _, fila in detalle_ot.sort_values(
+            "ot"
+        ).iterrows():
+
+            tabla_ot_data.append([
+                str(
+                    fila.get(
+                        "ot",
+                        ""
+                    )
+                ),
+                str(
+                    fila.get(
+                        "equipo",
+                        ""
+                    )
+                ),
+                str(
+                    int(
+                        fila.get(
+                            "actividades",
+                            0
+                        )
+                    )
+                ),
+                f"{float(fila.get('avance_ot', 0)):.1f}%",
+                str(
+                    int(
+                        fila.get(
+                            "culminadas",
+                            0
+                        )
+                    )
+                ),
+                str(
+                    int(
+                        fila.get(
+                            "en_ejecucion",
+                            0
+                        )
+                    )
+                ),
+                str(
+                    int(
+                        fila.get(
+                            "no_iniciadas",
+                            0
+                        )
+                    )
+                )
+            ])
+
+        tabla_ot = Table(
+            tabla_ot_data,
+            colWidths=[
+                68,
+                120,
+                42,
+                55,
+                42,
+                42,
+                48
+            ],
+            repeatRows=1
+        )
+
+        tabla_ot.setStyle(
+            TableStyle([
+                (
+                    "BACKGROUND",
+                    (0, 0),
+                    (-1, 0),
+                    colors.HexColor("#082D55")
+                ),
+                (
+                    "TEXTCOLOR",
+                    (0, 0),
+                    (-1, 0),
+                    colors.white
+                ),
+                (
+                    "FONTNAME",
+                    (0, 0),
+                    (-1, 0),
+                    "Helvetica-Bold"
+                ),
+                (
+                    "FONTSIZE",
+                    (0, 0),
+                    (-1, -1),
+                    7.5
+                ),
+                (
+                    "GRID",
+                    (0, 0),
+                    (-1, -1),
+                    0.4,
+                    colors.HexColor("#D0D5DD")
+                ),
+                (
+                    "ROWBACKGROUNDS",
+                    (0, 1),
+                    (-1, -1),
+                    [
+                        colors.white,
+                        colors.HexColor("#F8FAFC")
+                    ]
+                ),
+                (
+                    "ALIGN",
+                    (2, 1),
+                    (-1, -1),
+                    "CENTER"
+                ),
+                (
+                    "VALIGN",
+                    (0, 0),
+                    (-1, -1),
+                    "MIDDLE"
+                )
+            ])
+        )
+
+        story.append(tabla_ot)
+
+    else:
+
+        story.append(
+            Paragraph(
+                "No existe información disponible por OT.",
+                styles["BodyText"]
+            )
+        )
+
+    story.append(Spacer(1, 16))
+
+    story.append(
+        Paragraph(
+            "MAININ - Mantenimiento e Ingeniería Industrial",
+            estilo_subtitulo
+        )
+    )
+
+    doc.build(story)
+
+    buffer.seek(0)
+
+    return buffer.getvalue()
 
 
 # =====================================================
@@ -4541,9 +5073,242 @@ else:
 
     elif pagina == "Reportes":
 
-        st.subheader(f"Reportes - {nombre_area}")
-
-        st.info(
-            "Aquí construiremos los reportes de cumplimiento, "
-            "avance y pendientes."
+        st.subheader(
+            f"Reportes - {nombre_area}"
         )
+
+        st.caption(
+            "Generación de reporte ejecutivo del área "
+            "con indicadores, resumen operativo y detalle por OT."
+        )
+
+        if not ots_area:
+
+            st.warning(
+                "Todavía no existen OTs cargadas para esta área."
+            )
+
+        else:
+
+            ids_ots_reporte = [
+                ot["id"]
+                for ot in ots_area
+            ]
+
+            actividades_reporte = (
+                supabase
+                .table("actividades")
+                .select(
+                    "id,ot_id,codigo_actividad,descripcion,"
+                    "supervisor,especialidad,grupo,peso,"
+                    "inicio_plan,fin_plan,seccion,personal,"
+                    "duracion_h,hh_plan,critica,activo"
+                )
+                .in_(
+                    "ot_id",
+                    ids_ots_reporte
+                )
+                .eq(
+                    "activo",
+                    True
+                )
+                .execute()
+            ).data or []
+
+            if not actividades_reporte:
+
+                st.warning(
+                    "No existen actividades cargadas "
+                    "para esta área."
+                )
+
+            else:
+
+                df_ots_reporte = pd.DataFrame(
+                    ots_area
+                )
+
+                df_actividades_reporte = pd.DataFrame(
+                    actividades_reporte
+                )
+
+                ids_actividades_reporte = (
+                    df_actividades_reporte[
+                        "id"
+                    ]
+                    .dropna()
+                    .tolist()
+                )
+
+                avances_reporte = (
+                    supabase
+                    .table("avances_actividad")
+                    .select(
+                        "id,actividad_id,avance,"
+                        "descripcion_avance,observaciones,"
+                        "tipo_evidencia,critica,evidencias,"
+                        "usuario,fecha_registro"
+                    )
+                    .in_(
+                        "actividad_id",
+                        ids_actividades_reporte
+                    )
+                    .execute()
+                ).data or []
+
+                df_avances_reporte = pd.DataFrame(
+                    avances_reporte
+                )
+
+                kpis_reporte = compute_kpis(
+                    df_actividades_reporte,
+                    df_avances_reporte
+                )
+
+                r1, r2, r3, r4 = st.columns(4)
+
+                with r1:
+                    st.metric(
+                        "OTs",
+                        len(df_ots_reporte)
+                    )
+
+                with r2:
+                    st.metric(
+                        "Actividades",
+                        kpis_reporte[
+                            "actividades"
+                        ]
+                    )
+
+                with r3:
+                    st.metric(
+                        "Avance general",
+                        f"{kpis_reporte['avance_general']:.1f}%"
+                    )
+
+                with r4:
+                    st.metric(
+                        "SPI",
+                        f"{kpis_reporte['spi']:.2f}"
+                    )
+
+                st.divider()
+
+                st.subheader(
+                    "Reporte ejecutivo PDF"
+                )
+
+                st.write(
+                    "El PDF incluye indicadores principales, "
+                    "resumen del día, actividades críticas, "
+                    "pendientes y detalle consolidado por OT."
+                )
+
+                try:
+
+                    pdf_bytes = construir_pdf_ejecutivo_area(
+                        df_ots_reporte,
+                        df_actividades_reporte,
+                        df_avances_reporte,
+                        nombre_area
+                    )
+
+                    st.download_button(
+                        "Descargar reporte ejecutivo PDF",
+                        data=pdf_bytes,
+                        file_name=(
+                            f"PDP_Chinalco_"
+                            f"{codigo_area.lower()}_"
+                            f"{datetime.now():%Y%m%d_%H%M}.pdf"
+                        ),
+                        mime="application/pdf",
+                        type="primary",
+                        use_container_width=True
+                    )
+
+                except Exception as exc:
+
+                    st.error(
+                        "No fue posible generar el PDF: "
+                        f"{exc}"
+                    )
+
+                st.divider()
+
+                st.subheader(
+                    "Exportación completa a Excel"
+                )
+
+                estado_reporte = build_activity_status(
+                    df_actividades_reporte,
+                    df_avances_reporte
+                )
+
+                if not estado_reporte.empty:
+
+                    estado_reporte = (
+                        estado_reporte
+                        .merge(
+                            df_ots_reporte[
+                                [
+                                    "id",
+                                    "ot",
+                                    "equipo"
+                                ]
+                            ],
+                            left_on="ot_id",
+                            right_on="id",
+                            how="left",
+                            suffixes=(
+                                "",
+                                "_ot"
+                            )
+                        )
+                    )
+
+                buffer_reporte_excel = io.BytesIO()
+
+                with pd.ExcelWriter(
+                    buffer_reporte_excel,
+                    engine="openpyxl"
+                ) as writer:
+
+                    df_ots_reporte.to_excel(
+                        writer,
+                        index=False,
+                        sheet_name="OTs"
+                    )
+
+                    df_actividades_reporte.to_excel(
+                        writer,
+                        index=False,
+                        sheet_name="Actividades"
+                    )
+
+                    df_avances_reporte.to_excel(
+                        writer,
+                        index=False,
+                        sheet_name="Avances"
+                    )
+
+                    estado_reporte.to_excel(
+                        writer,
+                        index=False,
+                        sheet_name="Estado_Actual"
+                    )
+
+                st.download_button(
+                    "Descargar reporte completo en Excel",
+                    data=buffer_reporte_excel.getvalue(),
+                    file_name=(
+                        f"PDP_Chinalco_"
+                        f"{codigo_area.lower()}_"
+                        f"{datetime.now():%Y%m%d_%H%M}.xlsx"
+                    ),
+                    mime=(
+                        "application/vnd.openxmlformats-"
+                        "officedocument.spreadsheetml.sheet"
+                    ),
+                    use_container_width=True
+                )
