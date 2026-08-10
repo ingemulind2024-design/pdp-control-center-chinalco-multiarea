@@ -1,4 +1,5 @@
 import io
+from pathlib import Path
 import uuid
 
 import streamlit as st
@@ -2828,6 +2829,76 @@ def preparar_dataframe_excel(df: pd.DataFrame) -> pd.DataFrame:
     return salida
 
 
+
+# =====================================================
+# IDENTIDAD VISUAL MAININ - SIDEBAR
+# =====================================================
+
+LOGO_MAININ = Path(__file__).parent / "logo_mainin.png"
+
+
+def mostrar_logo_mainin_sidebar():
+    """
+    Muestra el logo corporativo MAININ una sola vez en el panel lateral.
+    Funciona para ADMIN y todos los usuarios REPORTER.
+    """
+
+    with st.sidebar:
+
+        if LOGO_MAININ.exists():
+
+            st.image(
+                str(LOGO_MAININ),
+                use_container_width=True
+            )
+
+        else:
+
+            # Respaldo si el archivo todavía no fue cargado al repositorio.
+            st.markdown(
+                """
+                <div style="
+                    text-align:center;
+                    font-weight:700;
+                    font-size:24px;
+                    margin-bottom:4px;
+                ">
+                    MAININ
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+        st.markdown(
+            """
+            <div style="
+                text-align:center;
+                font-size:13px;
+                font-weight:600;
+                letter-spacing:0.4px;
+                color:#475467;
+                margin-top:-4px;
+                margin-bottom:2px;
+            ">
+                PDP CONTROL CENTER
+            </div>
+
+            <div style="
+                text-align:center;
+                font-size:12px;
+                font-weight:700;
+                color:#155EEF;
+                margin-bottom:12px;
+            ">
+                CHINALCO
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        st.divider()
+
+
 # =====================================================
 # LOGIN Y CONTROL DE ACCESO
 # =====================================================
@@ -2932,11 +3003,9 @@ else:
 # SIDEBAR
 # =====================================================
 
+mostrar_logo_mainin_sidebar()
+
 with st.sidebar:
-
-    st.title("MAININ")
-
-    st.caption("PDP Control Center Chinalco")
 
     st.divider()
 
