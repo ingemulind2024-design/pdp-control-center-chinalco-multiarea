@@ -2870,6 +2870,884 @@ if rol == "admin":
                         )
 
 
+
+                st.divider()
+
+                # =========================================
+                # 8. CENTRO DE CONTROL OPERATIVO
+                # =========================================
+
+                if area_id_seleccionada_admin is None:
+
+                    st.subheader(
+                        "Centro de Control Operativo - Todas las áreas"
+                    )
+
+                    st.caption(
+                        "Detalle consolidado de todas las actividades. "
+                        "Puede filtrar por área, OT, estado, supervisor "
+                        "y especialidad sin salir de la sesión ADMIN."
+                    )
+
+                else:
+
+                    st.subheader(
+                        f"Centro de Control Operativo - {vista_admin}"
+                    )
+
+                    st.caption(
+                        "Detalle completo del área seleccionada: "
+                        "OTs, actividades, avance, responsables, "
+                        "fechas, HH, criticidad y última actualización."
+                    )
+
+                # Reconstruimos el estado completo para mostrar
+                # también actividades culminadas y no iniciadas.
+                detalle_operativo_admin = build_activity_status(
+                    df_actividades_admin,
+                    df_avances_admin
+                )
+
+                if detalle_operativo_admin.empty:
+
+                    st.info(
+                        "No existen actividades para mostrar "
+                        "en la vista seleccionada."
+                    )
+
+                else:
+
+                    # -----------------------------------------
+                    # Incorporar OT, equipo y área
+                    # -----------------------------------------
+
+                    detalle_operativo_admin = (
+                        detalle_operativo_admin
+                        .merge(
+                            df_ots_admin[
+                                [
+                                    "id",
+                                    "ot",
+                                    "area_id",
+                                    "equipo"
+                                ]
+                            ],
+                            left_on="ot_id",
+                            right_on="id",
+                            how="left",
+                            suffixes=(
+                                "",
+                                "_ot"
+                            )
+                        )
+                    )
+
+                    mapa_area_detalle_admin = {
+                        area["id"]: area["nombre"]
+                        for area in areas_vista_admin
+                    }
+
+                    detalle_operativo_admin[
+                        "Área"
+                    ] = (
+                        detalle_operativo_admin[
+                            "area_id"
+                        ].map(
+                            mapa_area_detalle_admin
+                        )
+                    )
+
+                    # -----------------------------------------
+                    # Estado operativo
+                    # -----------------------------------------
+
+                    detalle_operativo_admin[
+                        "ESTADO"
+                    ] = np.where(
+                        detalle_operativo_admin[
+                            "avance_real"
+                        ] >= 100,
+                        "CULMINADA",
+                        np.where(
+                            detalle_operativo_admin[
+                                "avance_real"
+                            ] > 0,
+                            "EN EJECUCIÓN",
+                            "NO INICIADA"
+                        )
+                    )
+
+                    if (
+                        "critica"
+                        not in detalle_operativo_admin.columns
+                    ):
+                        detalle_operativo_admin[
+                            "critica"
+                        ] = False
+
+                    detalle_operativo_admin[
+                        "critica"
+                    ] = (
+                        detalle_operativo_admin[
+                            "critica"
+                        ]
+                        .fillna(False)
+                    )
+
+                    detalle_operativo_admin[
+                        "CRITICIDAD"
+                    ] = np.where(
+                        detalle_operativo_admin[
+                            "critica"
+                        ],
+                        "CRÍTICA",
+                        "NORMAL"
+                    )
+
+                    # -----------------------------------------
+                    # Última actualización en hora Perú
+                    # -----------------------------------------
+
+                    if (
+                        "fecha_registro"
+                        in detalle_operativo_admin.columns
+                    ):
+
+                        fecha_ultima_admin = pd.to_datetime(
+                            detalle_operativo_admin[
+                                "fecha_registro"
+                            ],
+                            errors="coerce",
+                            utc=True
+                        )
+
+                        detalle_operativo_admin[
+                            "ÚLTIMA ACTUALIZACIÓN"
+                        ] = (
+                            fecha_ultima_admin
+                            .dt.tz_convert(
+                                "America/Lima"
+                            )
+                            .dt.strftime(
+                                "%d/%m/%Y %H:%M"
+                            )
+                        )
+
+                    else:
+
+                        detalle_operativo_admin[
+                            "ÚLTIMA ACTUALIZACIÓN"
+                        ] = ""
+
+                    # -----------------------------------------
+                    # Normalizar números
+                    # -----------------------------------------
+
+                    for columna_num_admin in [
+                        "avance_real",
+                        "personal",
+                        "hh_plan"
+                    ]:
+
+                        if (
+                            columna_num_admin
+                            in detalle_operativo_admin.columns
+                        ):
+
+                            detalle_operativo_admin[
+                                columna_num_admin
+                            ] = pd.to_numeric(
+                                detalle_operativo_admin[
+                                    columna_num_admin
+                                ],
+                                errors="coerce"
+                            ).fillna(0)
+
+                    # -----------------------------------------
+                    # KPIs rápidos de la vista operativa
+                    # -----------------------------------------
+
+                    total_operativo_admin = len(
+                        detalle_operativo_admin
+                    )
+
+                    ejecucion_operativo_admin = int(
+                        (
+                            detalle_operativo_admin[
+                                "ESTADO"
+                            ]
+                            == "EN EJECUCIÓN"
+                        ).sum()
+                    )
+
+                    culminadas_operativo_admin = int(
+                        (
+                            detalle_operativo_admin[
+                                "ESTADO"
+                            ]
+                            == "CULMINADA"
+                        ).sum()
+                    )
+
+                    no_iniciadas_operativo_admin = int(
+                        (
+                            detalle_operativo_admin[
+                                "ESTADO"
+                            ]
+                            == "NO INICIADA"
+                        ).sum()
+                    )
+
+                    criticas_operativo_admin = int(
+                        detalle_operativo_admin[
+                            "critica"
+                        ].sum()
+                    )
+
+                    op1, op2, op3, op4, op5 = st.columns(
+                        5
+                    )
+
+                    with op1:
+
+                        st.metric(
+                            "Total actividades",
+                            total_operativo_admin
+                        )
+
+                    with op2:
+
+                        st.metric(
+                            "En ejecución",
+                            ejecucion_operativo_admin
+                        )
+
+                    with op3:
+
+                        st.metric(
+                            "Culminadas",
+                            culminadas_operativo_admin
+                        )
+
+                    with op4:
+
+                        st.metric(
+                            "No iniciadas",
+                            no_iniciadas_operativo_admin
+                        )
+
+                    with op5:
+
+                        st.metric(
+                            "Críticas",
+                            criticas_operativo_admin
+                        )
+
+                    st.markdown(
+                        "#### Filtros operativos"
+                    )
+
+                    # -----------------------------------------
+                    # FILTROS FILA 1
+                    # -----------------------------------------
+
+                    filtro1, filtro2, filtro3 = st.columns(
+                        3
+                    )
+
+                    with filtro1:
+
+                        if (
+                            area_id_seleccionada_admin
+                            is None
+                        ):
+
+                            opciones_area_operativa = (
+                                ["TODAS"]
+                                + sorted(
+                                    detalle_operativo_admin[
+                                        "Área"
+                                    ]
+                                    .dropna()
+                                    .astype(str)
+                                    .unique()
+                                    .tolist()
+                                )
+                            )
+
+                            filtro_area_operativa = (
+                                st.selectbox(
+                                    "Área",
+                                    opciones_area_operativa,
+                                    key=(
+                                        "admin_operativo_area"
+                                    )
+                                )
+                            )
+
+                        else:
+
+                            filtro_area_operativa = (
+                                vista_admin
+                            )
+
+                    with filtro2:
+
+                        opciones_ot_operativa = (
+                            ["TODAS"]
+                            + sorted(
+                                detalle_operativo_admin[
+                                    "ot"
+                                ]
+                                .dropna()
+                                .astype(str)
+                                .unique()
+                                .tolist()
+                            )
+                        )
+
+                        filtro_ot_operativa = st.selectbox(
+                            "OT",
+                            opciones_ot_operativa,
+                            key="admin_operativo_ot"
+                        )
+
+                    with filtro3:
+
+                        opciones_estado_operativo = [
+                            "TODOS",
+                            "NO INICIADA",
+                            "EN EJECUCIÓN",
+                            "CULMINADA"
+                        ]
+
+                        filtro_estado_operativo = (
+                            st.selectbox(
+                                "Estado",
+                                opciones_estado_operativo,
+                                key=(
+                                    "admin_operativo_estado"
+                                )
+                            )
+                        )
+
+                    # -----------------------------------------
+                    # FILTROS FILA 2
+                    # -----------------------------------------
+
+                    filtro4, filtro5, filtro6 = st.columns(
+                        3
+                    )
+
+                    with filtro4:
+
+                        supervisores_operativos = (
+                            ["TODOS"]
+                            + sorted(
+                                detalle_operativo_admin[
+                                    "supervisor"
+                                ]
+                                .dropna()
+                                .astype(str)
+                                .loc[
+                                    lambda serie:
+                                    serie.str.strip()
+                                    != ""
+                                ]
+                                .unique()
+                                .tolist()
+                            )
+                            if (
+                                "supervisor"
+                                in detalle_operativo_admin.columns
+                            )
+                            else ["TODOS"]
+                        )
+
+                        filtro_supervisor_operativo = (
+                            st.selectbox(
+                                "Supervisor",
+                                supervisores_operativos,
+                                key=(
+                                    "admin_operativo_supervisor"
+                                )
+                            )
+                        )
+
+                    with filtro5:
+
+                        especialidades_operativas = (
+                            ["TODAS"]
+                            + sorted(
+                                detalle_operativo_admin[
+                                    "especialidad"
+                                ]
+                                .dropna()
+                                .astype(str)
+                                .loc[
+                                    lambda serie:
+                                    serie.str.strip()
+                                    != ""
+                                ]
+                                .unique()
+                                .tolist()
+                            )
+                            if (
+                                "especialidad"
+                                in detalle_operativo_admin.columns
+                            )
+                            else ["TODAS"]
+                        )
+
+                        filtro_especialidad_operativa = (
+                            st.selectbox(
+                                "Especialidad",
+                                especialidades_operativas,
+                                key=(
+                                    "admin_operativo_especialidad"
+                                )
+                            )
+                        )
+
+                    with filtro6:
+
+                        filtro_criticidad_operativa = (
+                            st.selectbox(
+                                "Criticidad",
+                                [
+                                    "TODAS",
+                                    "CRÍTICA",
+                                    "NORMAL"
+                                ],
+                                key=(
+                                    "admin_operativo_criticidad"
+                                )
+                            )
+                        )
+
+                    busqueda_operativa_admin = st.text_input(
+                        "Buscar por OT, equipo, actividad o descripción",
+                        placeholder=(
+                            "Ejemplo: 7169908, SAG, ACT-009..."
+                        ),
+                        key="admin_operativo_busqueda"
+                    )
+
+                    # -----------------------------------------
+                    # APLICAR FILTROS
+                    # -----------------------------------------
+
+                    detalle_filtrado_admin = (
+                        detalle_operativo_admin.copy()
+                    )
+
+                    if (
+                        area_id_seleccionada_admin
+                        is None
+                        and filtro_area_operativa
+                        != "TODAS"
+                    ):
+
+                        detalle_filtrado_admin = (
+                            detalle_filtrado_admin[
+                                detalle_filtrado_admin[
+                                    "Área"
+                                ].astype(str)
+                                == filtro_area_operativa
+                            ]
+                        )
+
+                    if filtro_ot_operativa != "TODAS":
+
+                        detalle_filtrado_admin = (
+                            detalle_filtrado_admin[
+                                detalle_filtrado_admin[
+                                    "ot"
+                                ].astype(str)
+                                == filtro_ot_operativa
+                            ]
+                        )
+
+                    if (
+                        filtro_estado_operativo
+                        != "TODOS"
+                    ):
+
+                        detalle_filtrado_admin = (
+                            detalle_filtrado_admin[
+                                detalle_filtrado_admin[
+                                    "ESTADO"
+                                ]
+                                == filtro_estado_operativo
+                            ]
+                        )
+
+                    if (
+                        filtro_supervisor_operativo
+                        != "TODOS"
+                        and "supervisor"
+                        in detalle_filtrado_admin.columns
+                    ):
+
+                        detalle_filtrado_admin = (
+                            detalle_filtrado_admin[
+                                detalle_filtrado_admin[
+                                    "supervisor"
+                                ].astype(str)
+                                == filtro_supervisor_operativo
+                            ]
+                        )
+
+                    if (
+                        filtro_especialidad_operativa
+                        != "TODAS"
+                        and "especialidad"
+                        in detalle_filtrado_admin.columns
+                    ):
+
+                        detalle_filtrado_admin = (
+                            detalle_filtrado_admin[
+                                detalle_filtrado_admin[
+                                    "especialidad"
+                                ].astype(str)
+                                == filtro_especialidad_operativa
+                            ]
+                        )
+
+                    if (
+                        filtro_criticidad_operativa
+                        != "TODAS"
+                    ):
+
+                        detalle_filtrado_admin = (
+                            detalle_filtrado_admin[
+                                detalle_filtrado_admin[
+                                    "CRITICIDAD"
+                                ]
+                                == filtro_criticidad_operativa
+                            ]
+                        )
+
+                    if busqueda_operativa_admin.strip():
+
+                        termino_operativo_admin = (
+                            busqueda_operativa_admin
+                            .strip()
+                            .lower()
+                        )
+
+                        mascara_busqueda_admin = (
+                            pd.Series(
+                                False,
+                                index=(
+                                    detalle_filtrado_admin.index
+                                )
+                            )
+                        )
+
+                        for columna_busqueda_admin in [
+                            "ot",
+                            "equipo",
+                            "codigo_actividad",
+                            "descripcion"
+                        ]:
+
+                            if (
+                                columna_busqueda_admin
+                                in detalle_filtrado_admin.columns
+                            ):
+
+                                mascara_busqueda_admin = (
+                                    mascara_busqueda_admin
+                                    |
+                                    detalle_filtrado_admin[
+                                        columna_busqueda_admin
+                                    ]
+                                    .fillna("")
+                                    .astype(str)
+                                    .str.lower()
+                                    .str.contains(
+                                        termino_operativo_admin,
+                                        regex=False
+                                    )
+                                )
+
+                        detalle_filtrado_admin = (
+                            detalle_filtrado_admin[
+                                mascara_busqueda_admin
+                            ]
+                        )
+
+                    # -----------------------------------------
+                    # RESULTADO FILTRADO
+                    # -----------------------------------------
+
+                    st.caption(
+                        f"{len(detalle_filtrado_admin)} "
+                        "actividad(es) encontradas con los "
+                        "filtros seleccionados."
+                    )
+
+                    columnas_operativas_admin = [
+                        "Área",
+                        "ot",
+                        "equipo",
+                        "codigo_actividad",
+                        "descripcion",
+                        "ESTADO",
+                        "avance_real",
+                        "CRITICIDAD",
+                        "supervisor",
+                        "especialidad",
+                        "grupo",
+                        "inicio_plan",
+                        "fin_plan",
+                        "personal",
+                        "hh_plan",
+                        "ÚLTIMA ACTUALIZACIÓN",
+                        "descripcion_avance",
+                        "observaciones"
+                    ]
+
+                    columnas_operativas_admin = [
+                        columna
+                        for columna
+                        in columnas_operativas_admin
+                        if columna
+                        in detalle_filtrado_admin.columns
+                    ]
+
+                    tabla_operativa_admin = (
+                        detalle_filtrado_admin[
+                            columnas_operativas_admin
+                        ]
+                        .copy()
+                    )
+
+                    tabla_operativa_admin = (
+                        tabla_operativa_admin
+                        .rename(
+                            columns={
+                                "ot": "OT",
+                                "equipo": "EQUIPO",
+                                "codigo_actividad":
+                                    "ACTIVIDAD",
+                                "descripcion":
+                                    "DESCRIPCIÓN",
+                                "avance_real":
+                                    "AVANCE (%)",
+                                "supervisor":
+                                    "SUPERVISOR",
+                                "especialidad":
+                                    "ESPECIALIDAD",
+                                "grupo":
+                                    "GRUPO",
+                                "inicio_plan":
+                                    "INICIO PLAN",
+                                "fin_plan":
+                                    "FIN PLAN",
+                                "personal":
+                                    "PERSONAL",
+                                "hh_plan":
+                                    "HH PLAN",
+                                "descripcion_avance":
+                                    "ÚLTIMO AVANCE",
+                                "observaciones":
+                                    "OBSERVACIONES"
+                            }
+                        )
+                    )
+
+                    if "AVANCE (%)" in (
+                        tabla_operativa_admin.columns
+                    ):
+
+                        tabla_operativa_admin[
+                            "AVANCE (%)"
+                        ] = (
+                            tabla_operativa_admin[
+                                "AVANCE (%)"
+                            ]
+                            .round(1)
+                        )
+
+                    if "HH PLAN" in (
+                        tabla_operativa_admin.columns
+                    ):
+
+                        tabla_operativa_admin[
+                            "HH PLAN"
+                        ] = (
+                            tabla_operativa_admin[
+                                "HH PLAN"
+                            ]
+                            .round(0)
+                        )
+
+                    st.dataframe(
+                        tabla_operativa_admin,
+                        use_container_width=True,
+                        hide_index=True,
+                        height=600
+                    )
+
+                    # -----------------------------------------
+                    # DETALLE RÁPIDO DE UNA ACTIVIDAD
+                    # -----------------------------------------
+
+                    if not detalle_filtrado_admin.empty:
+
+                        st.markdown(
+                            "#### Detalle rápido de actividad"
+                        )
+
+                        opciones_actividad_admin = {}
+
+                        for _, fila_admin in (
+                            detalle_filtrado_admin.iterrows()
+                        ):
+
+                            etiqueta_admin = (
+                                f"OT {fila_admin.get('ot', '')} | "
+                                f"{fila_admin.get('codigo_actividad', '')} | "
+                                f"{fila_admin.get('descripcion', '')}"
+                            )
+
+                            opciones_actividad_admin[
+                                etiqueta_admin
+                            ] = fila_admin
+
+                        actividad_admin_texto = st.selectbox(
+                            "Seleccionar actividad",
+                            list(
+                                opciones_actividad_admin.keys()
+                            ),
+                            key=(
+                                "admin_operativo_actividad"
+                            )
+                        )
+
+                        actividad_admin_detalle = (
+                            opciones_actividad_admin[
+                                actividad_admin_texto
+                            ]
+                        )
+
+                        det1, det2, det3, det4 = st.columns(
+                            4
+                        )
+
+                        with det1:
+
+                            st.metric(
+                                "Avance",
+                                f"{float(actividad_admin_detalle.get('avance_real', 0)):.1f}%"
+                            )
+
+                        with det2:
+
+                            st.metric(
+                                "Estado",
+                                actividad_admin_detalle.get(
+                                    "ESTADO",
+                                    ""
+                                )
+                            )
+
+                        with det3:
+
+                            st.metric(
+                                "Personal",
+                                int(
+                                    float(
+                                        actividad_admin_detalle.get(
+                                            "personal",
+                                            0
+                                        )
+                                        or 0
+                                    )
+                                )
+                            )
+
+                        with det4:
+
+                            st.metric(
+                                "HH plan",
+                                f"{float(actividad_admin_detalle.get('hh_plan', 0) or 0):.0f}"
+                            )
+
+                        dta1, dta2 = st.columns(
+                            2
+                        )
+
+                        with dta1:
+
+                            st.write(
+                                "**Supervisor:** "
+                                f"{actividad_admin_detalle.get('supervisor') or '-'}"
+                            )
+
+                            st.write(
+                                "**Especialidad:** "
+                                f"{actividad_admin_detalle.get('especialidad') or '-'}"
+                            )
+
+                            st.write(
+                                "**Grupo:** "
+                                f"{actividad_admin_detalle.get('grupo') or '-'}"
+                            )
+
+                            st.write(
+                                "**Criticidad:** "
+                                f"{actividad_admin_detalle.get('CRITICIDAD') or '-'}"
+                            )
+
+                        with dta2:
+
+                            st.write(
+                                "**Inicio plan:** "
+                                f"{actividad_admin_detalle.get('inicio_plan') or '-'}"
+                            )
+
+                            st.write(
+                                "**Fin plan:** "
+                                f"{actividad_admin_detalle.get('fin_plan') or '-'}"
+                            )
+
+                            st.write(
+                                "**Última actualización:** "
+                                f"{actividad_admin_detalle.get('ÚLTIMA ACTUALIZACIÓN') or 'Sin reporte'}"
+                            )
+
+                        ultimo_avance_admin = (
+                            actividad_admin_detalle.get(
+                                "descripcion_avance"
+                            )
+                            or ""
+                        )
+
+                        observaciones_admin = (
+                            actividad_admin_detalle.get(
+                                "observaciones"
+                            )
+                            or ""
+                        )
+
+                        if ultimo_avance_admin:
+
+                            st.info(
+                                "**Último avance reportado:** "
+                                f"{ultimo_avance_admin}"
+                            )
+
+                        if observaciones_admin:
+
+                            st.warning(
+                                "**Observaciones / Restricciones:** "
+                                f"{observaciones_admin}"
+                            )
+
+
     # =====================================================
     # IMPORTAR PLANIFICACIÓN
     # =====================================================
