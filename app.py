@@ -4719,7 +4719,7 @@ if rol == "admin":
                                     * 100
                                 )
                                 if exigibles_sup > 0
-                                else 100.0
+                                else None
                             )
 
                             fechas_validas_sup = (
@@ -4746,7 +4746,12 @@ if rol == "admin":
                             # Estado gerencial del supervisor
                             # ---------------------------------
 
-                            if (
+                            if exigibles_sup == 0:
+                                estado_gestion_sup = (
+                                    "⚪ PROGRAMADO"
+                                )
+
+                            elif (
                                 vencidas_sup > 0
                                 or desviacion_sup < -20
                             ):
@@ -4806,9 +4811,14 @@ if rol == "admin":
                                 "Sin reporte":
                                     sin_reporte_sup,
                                 "Reporte (%)":
-                                    round(
-                                        cumplimiento_reporte_sup,
-                                        0
+                                    (
+                                        round(
+                                            cumplimiento_reporte_sup,
+                                            0
+                                        )
+                                        if cumplimiento_reporte_sup
+                                        is not None
+                                        else None
                                     ),
                                 "Último reporte":
                                     ultimo_reporte_sup
@@ -4841,10 +4851,14 @@ if rol == "admin":
 
                             supervisores_alerta_admin = int(
                                 (
-                                    df_supervisores_admin[
+                                    ~df_supervisores_admin[
                                         "Estado"
-                                    ]
-                                    != "🟢 EN LÍNEA"
+                                    ].isin(
+                                        [
+                                            "🟢 EN LÍNEA",
+                                            "⚪ PROGRAMADO"
+                                        ]
+                                    )
                                 ).sum()
                             )
 
@@ -4897,7 +4911,8 @@ if rol == "admin":
                                 "🔴 INTERVENCIÓN": 1,
                                 "🟠 RECUPERACIÓN": 2,
                                 "🟡 SEGUIMIENTO": 3,
-                                "🟢 EN LÍNEA": 4
+                                "🟢 EN LÍNEA": 4,
+                                "⚪ PROGRAMADO": 5
                             }
 
                             df_supervisores_admin[
@@ -4962,21 +4977,24 @@ if rol == "admin":
                                             format="%.1f"
                                         ),
                                     "Reporte (%)":
-                                        st.column_config.ProgressColumn(
+                                        st.column_config.NumberColumn(
                                             "Reporte (%)",
-                                            min_value=0,
-                                            max_value=100,
                                             format="%.0f%%"
                                         )
                                 }
                             )
 
                             st.caption(
-                                "Criterio: 'Sin reporte' solo considera "
-                                "actividades cuyo inicio plan ya ocurrió y "
-                                "que aún no tienen ningún avance registrado. "
-                                "'Atrasadas' considera desviación menor a "
-                                "-10 pp o actividades vencidas sin culminar."
+                                "Criterio: el % de reporte comienza a medirse "
+                                "recién cuando llega la hora de inicio planificada "
+                                "de al menos una actividad del supervisor. "
+                                "Antes de ese momento el estado es PROGRAMADO y "
+                                "el % de reporte queda sin valor. "
+                                "'Sin reporte' solo considera actividades cuyo "
+                                "inicio plan ya ocurrió y que aún no tienen ningún "
+                                "avance registrado. 'Atrasadas' considera "
+                                "desviación menor a -10 pp o actividades vencidas "
+                                "sin culminar."
                             )
 
 
