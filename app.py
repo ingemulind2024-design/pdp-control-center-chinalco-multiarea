@@ -1,4 +1,6 @@
 import io
+import hashlib
+import hmac
 from pathlib import Path
 import uuid
 
@@ -2899,6 +2901,92 @@ def mostrar_logo_mainin_sidebar():
         st.divider()
 
 
+
+# =====================================================
+# CONTROL DE ROLES Y CONTRASEÑAS
+# =====================================================
+
+ROLES_PERMITIDOS = {
+    "admin",
+    "planner",
+    "supervisor",
+    "lider"
+}
+
+
+def normalizar_rol(rol):
+    """
+    Mantiene compatibilidad con usuarios REPORTER existentes.
+    REPORTER se interpreta temporalmente como PLANNER.
+    """
+    rol_normalizado = str(rol or "").strip().lower()
+
+    if rol_normalizado == "reporter":
+        return "planner"
+
+    return rol_normalizado
+
+
+def verificar_contrasena(password_plano, password_hash):
+    """
+    Formato esperado:
+    pbkdf2_sha256$260000$SALT$HASH_HEX
+    """
+
+    if not password_hash:
+        return False
+
+    try:
+        algoritmo, iteraciones, salt, hash_guardado = (
+            password_hash.split("$", 3)
+        )
+
+        if algoritmo != "pbkdf2_sha256":
+            return False
+
+        hash_calculado = hashlib.pbkdf2_hmac(
+            "sha256",
+            password_plano.encode("utf-8"),
+            salt.encode("utf-8"),
+            int(iteraciones)
+        ).hex()
+
+        return hmac.compare_digest(
+            hash_calculado,
+            hash_guardado
+        )
+
+    except Exception:
+        return False
+
+
+def menu_por_rol(rol):
+    """
+    ADMIN: menú administrativo completo.
+    PLANNER: menú completo de su área.
+    SUPERVISOR / LIDER: solo registro de avances.
+    """
+
+    rol = normalizar_rol(rol)
+
+    if rol == "planner":
+        return [
+            "Dashboard",
+            "Registrar avance",
+            "Detalle por OT",
+            "Evidencias",
+            "Informe diario",
+            "Reportes"
+        ]
+
+    if rol in {"supervisor", "lider"}:
+        return [
+            "Registrar avance"
+        ]
+
+    return []
+
+
 # =====================================================
 # LOGIN Y CONTROL DE ACCESO
 # =====================================================
@@ -2908,7 +2996,7 @@ def obtener_usuario(username):
         supabase
         .table("usuarios_app")
         .select(
-            "id,username,nombre,rol,area_id,activo,"
+            "id,username,nombre,rol,area_id,activo,password_hash,"
             "areas(id,codigo,nombre)"
         )
         .eq("username", username)
@@ -2968,11 +3056,35 @@ if st.session_state["usuario_logueado"] is None:
             st.error("Usuario no encontrado o inactivo.")
 
         else:
-            # TEMPORAL PARA PRUEBAS
-            # Luego reemplazaremos esto por contraseña cifrada
-            if password.strip() == "1234":
 
-                st.session_state["usuario_logueado"] = usuario
+            rol_login = normalizar_rol(
+                usuario.get("rol")
+            )
+
+            if rol_login not in ROLES_PERMITIDOS:
+                st.error(
+                    "El usuario tiene un rol no permitido. "
+                    "Contacte al administrador."
+                )
+
+            elif (
+                rol_login != "admin"
+                and not usuario.get("area_id")
+            ):
+                st.error(
+                    "El usuario no tiene un área asignada."
+                )
+
+            elif verificar_contrasena(
+                password.strip(),
+                usuario.get("password_hash")
+            ):
+
+                usuario["rol"] = rol_login
+
+                st.session_state[
+                    "usuario_logueado"
+                ] = usuario
 
                 st.rerun()
 
@@ -2988,7 +3100,12 @@ if st.session_state["usuario_logueado"] is None:
 
 usuario = st.session_state["usuario_logueado"]
 
-rol = usuario["rol"]
+rol = normalizar_rol(
+    usuario.get("rol")
+)
+
+usuario["rol"] = rol
+
 area_info = usuario.get("areas")
 
 if rol == "admin":
@@ -3013,7 +3130,18 @@ with st.sidebar:
     st.success(usuario["nombre"])
 
     st.write("Rol:")
-    st.info(rol.upper())
+
+    nombre_rol_sidebar = {
+        "admin": "ADMIN",
+        "planner": "PLANNER",
+        "supervisor": "SUPERVISOR",
+        "lider": "LÍDER"
+    }.get(
+        rol,
+        rol.upper()
+    )
+
+    st.info(nombre_rol_sidebar)
 
     st.write("Área:")
 
@@ -6479,16 +6607,20 @@ else:
 
         st.divider()
 
+        opciones_menu = menu_por_rol(
+            rol
+        )
+
+        if not opciones_menu:
+            st.error(
+                "Este usuario no tiene permisos "
+                "de menú configurados."
+            )
+            st.stop()
+
         pagina = st.radio(
             "Menú",
-            [
-                "Dashboard",
-                "Registrar avance",
-                "Detalle por OT",
-                "Evidencias",
-                "Informe diario",
-                "Reportes"
-            ]
+            opciones_menu
         )
 
 
