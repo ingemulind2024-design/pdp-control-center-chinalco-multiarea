@@ -4302,33 +4302,54 @@ if rol == "admin":
                 st.divider()
 
                 # =========================================
-                # 8. PENDIENTES CRÍTICOS / PRIORITARIOS
+                # 8. DESEMPEÑO POR SUPERVISOR
                 # =========================================
 
                 if area_id_seleccionada_admin is None:
                     st.subheader(
-                        "Pendientes críticos y prioritarios"
+                        "Desempeño por Supervisor - Todas las áreas"
                     )
                 else:
                     st.subheader(
-                        f"Pendientes críticos y prioritarios - {vista_admin}"
+                        f"Desempeño por Supervisor - {vista_admin}"
                     )
 
-                estado_admin = build_activity_status(
+                st.caption(
+                    "Seguimiento gerencial del cumplimiento y disciplina "
+                    "de reporte por supervisor. Las actividades futuras "
+                    "todavía no iniciadas no se consideran como falta de reporte."
+                )
+
+                estado_supervisor_admin = build_activity_status(
                     df_actividades_admin,
                     df_avances_admin
                 )
 
-                if estado_admin.empty:
+                if estado_supervisor_admin.empty:
 
                     st.info(
-                        "No existen actividades pendientes."
+                        "No existen actividades para evaluar "
+                        "el desempeño de supervisores."
+                    )
+
+                elif (
+                    "supervisor"
+                    not in estado_supervisor_admin.columns
+                ):
+
+                    st.warning(
+                        "Las actividades cargadas no contienen "
+                        "información de supervisor."
                     )
 
                 else:
 
-                    estado_admin = (
-                        estado_admin
+                    # -----------------------------------------
+                    # Incorporar OT y área
+                    # -----------------------------------------
+
+                    estado_supervisor_admin = (
+                        estado_supervisor_admin
                         .merge(
                             df_ots_admin[
                                 [
@@ -4348,130 +4369,615 @@ if rol == "admin":
                         )
                     )
 
-                    mapa_nombres_area_admin = {
+                    mapa_area_supervisor_admin = {
                         area["id"]: area["nombre"]
                         for area in areas_vista_admin
                     }
 
-                    estado_admin["Área"] = (
-                        estado_admin[
+                    estado_supervisor_admin[
+                        "Área"
+                    ] = (
+                        estado_supervisor_admin[
                             "area_id"
                         ].map(
-                            mapa_nombres_area_admin
+                            mapa_area_supervisor_admin
                         )
                     )
 
-                    if "critica" not in estado_admin.columns:
-                        estado_admin["critica"] = False
+                    # -----------------------------------------
+                    # Normalizar campos
+                    # -----------------------------------------
 
-                    estado_admin["critica"] = (
-                        estado_admin[
-                            "critica"
+                    estado_supervisor_admin[
+                        "supervisor"
+                    ] = (
+                        estado_supervisor_admin[
+                            "supervisor"
                         ]
-                        .fillna(False)
+                        .fillna("")
+                        .astype(str)
+                        .str.strip()
                     )
 
-                    pendientes_admin = (
-                        estado_admin[
-                            estado_admin[
-                                "avance_real"
-                            ] < 100
+                    estado_supervisor_admin = (
+                        estado_supervisor_admin[
+                            estado_supervisor_admin[
+                                "supervisor"
+                            ] != ""
                         ]
                         .copy()
                     )
 
-                    if pendientes_admin.empty:
+                    if estado_supervisor_admin.empty:
 
-                        st.success(
-                            "No existen actividades pendientes."
+                        st.info(
+                            "No existen supervisores asignados "
+                            "en la planificación seleccionada."
                         )
 
                     else:
 
-                        pendientes_admin = (
-                            pendientes_admin
-                            .sort_values(
-                                [
-                                    "critica",
+                        ahora_supervisor_admin = (
+                            pd.Timestamp.now()
+                        )
+
+                        inicio_supervisor_admin = (
+                            pd.to_datetime(
+                                estado_supervisor_admin[
+                                    "inicio_plan"
+                                ],
+                                errors="coerce"
+                            )
+                        )
+
+                        fin_supervisor_admin = (
+                            pd.to_datetime(
+                                estado_supervisor_admin[
+                                    "fin_plan"
+                                ],
+                                errors="coerce"
+                            )
+                        )
+
+                        real_supervisor_admin = (
+                            pd.to_numeric(
+                                estado_supervisor_admin[
                                     "avance_real"
                                 ],
-                                ascending=[
-                                    False,
-                                    True
-                                ]
+                                errors="coerce"
+                            )
+                            .fillna(0)
+                            .clip(0, 100)
+                        )
+
+                        # -----------------------------------------
+                        # Plan esperado actual por actividad
+                        # -----------------------------------------
+
+                        planes_supervisor_admin = []
+
+                        for (
+                            fecha_inicio_sup,
+                            fecha_fin_sup
+                        ) in zip(
+                            inicio_supervisor_admin,
+                            fin_supervisor_admin
+                        ):
+
+                            if (
+                                pd.isna(fecha_inicio_sup)
+                                or pd.isna(fecha_fin_sup)
+                            ):
+                                planes_supervisor_admin.append(
+                                    0.0
+                                )
+                                continue
+
+                            if (
+                                fecha_fin_sup
+                                <= fecha_inicio_sup
+                            ):
+                                fecha_fin_sup = (
+                                    fecha_inicio_sup
+                                    + pd.Timedelta(minutes=1)
+                                )
+
+                            if (
+                                ahora_supervisor_admin
+                                <= fecha_inicio_sup
+                            ):
+                                plan_sup = 0.0
+
+                            elif (
+                                ahora_supervisor_admin
+                                >= fecha_fin_sup
+                            ):
+                                plan_sup = 100.0
+
+                            else:
+
+                                duracion_sup = (
+                                    fecha_fin_sup
+                                    - fecha_inicio_sup
+                                ).total_seconds()
+
+                                transcurrido_sup = (
+                                    ahora_supervisor_admin
+                                    - fecha_inicio_sup
+                                ).total_seconds()
+
+                                plan_sup = (
+                                    transcurrido_sup
+                                    / duracion_sup
+                                    * 100.0
+                                    if duracion_sup > 0
+                                    else 100.0
+                                )
+
+                            planes_supervisor_admin.append(
+                                max(
+                                    0.0,
+                                    min(
+                                        100.0,
+                                        float(plan_sup)
+                                    )
+                                )
+                            )
+
+                        estado_supervisor_admin[
+                            "PLAN ACTUAL (%)"
+                        ] = planes_supervisor_admin
+
+                        estado_supervisor_admin[
+                            "REAL ACTUAL (%)"
+                        ] = real_supervisor_admin
+
+                        estado_supervisor_admin[
+                            "DESVIACIÓN (pp)"
+                        ] = (
+                            estado_supervisor_admin[
+                                "REAL ACTUAL (%)"
+                            ]
+                            - estado_supervisor_admin[
+                                "PLAN ACTUAL (%)"
+                            ]
+                        ).round(1)
+
+                        # -----------------------------------------
+                        # Disciplina de reporte
+                        # -----------------------------------------
+
+                        if (
+                            "fecha_registro"
+                            in estado_supervisor_admin.columns
+                        ):
+
+                            fechas_registro_sup = (
+                                pd.to_datetime(
+                                    estado_supervisor_admin[
+                                        "fecha_registro"
+                                    ],
+                                    errors="coerce",
+                                    utc=True
+                                )
+                            )
+
+                            estado_supervisor_admin[
+                                "_fecha_registro_lima"
+                            ] = (
+                                fechas_registro_sup
+                                .dt.tz_convert(
+                                    "America/Lima"
+                                )
+                            )
+
+                        else:
+
+                            estado_supervisor_admin[
+                                "_fecha_registro_lima"
+                            ] = pd.NaT
+
+                        # Actividad exigible:
+                        # ya llegó su inicio plan y aún no culmina.
+                        estado_supervisor_admin[
+                            "_exigible"
+                        ] = (
+                            inicio_supervisor_admin.notna()
+                            & (
+                                inicio_supervisor_admin
+                                <= ahora_supervisor_admin
+                            )
+                            & (
+                                estado_supervisor_admin[
+                                    "REAL ACTUAL (%)"
+                                ] < 100
                             )
                         )
 
-                        pendientes_admin[
-                            "Prioridad"
-                        ] = np.where(
-                            pendientes_admin[
-                                "critica"
-                            ],
-                            "CRÍTICA",
-                            "PENDIENTE"
-                        )
-
-                        columnas_pendientes_admin = [
-                            "Prioridad",
-                            "Área",
-                            "ot",
-                            "equipo",
-                            "codigo_actividad",
-                            "descripcion",
-                            "supervisor",
-                            "especialidad",
-                            "avance_real",
-                            "inicio_plan",
-                            "fin_plan"
-                        ]
-
-                        columnas_pendientes_admin = [
-                            columna
-                            for columna
-                            in columnas_pendientes_admin
-                            if columna
-                            in pendientes_admin.columns
-                        ]
-
-                        tabla_pendientes_admin = (
-                            pendientes_admin[
-                                columnas_pendientes_admin
+                        # Sin reporte:
+                        # actividad exigible sin ningún avance registrado.
+                        estado_supervisor_admin[
+                            "_sin_reporte"
+                        ] = (
+                            estado_supervisor_admin[
+                                "_exigible"
                             ]
-                            .head(30)
-                            .copy()
+                            & estado_supervisor_admin[
+                                "_fecha_registro_lima"
+                            ].isna()
                         )
 
-                        tabla_pendientes_admin = (
-                            tabla_pendientes_admin
-                            .rename(
-                                columns={
-                                    "ot": "OT",
-                                    "equipo": "EQUIPO",
-                                    "codigo_actividad":
-                                        "ACTIVIDAD",
-                                    "descripcion":
-                                        "DESCRIPCIÓN",
-                                    "supervisor":
-                                        "SUPERVISOR",
-                                    "especialidad":
-                                        "ESPECIALIDAD",
-                                    "avance_real":
-                                        "AVANCE (%)",
-                                    "inicio_plan":
-                                        "INICIO PLAN",
-                                    "fin_plan":
-                                        "FIN PLAN"
+                        # Vencida:
+                        # fin plan superado y avance < 100%.
+                        estado_supervisor_admin[
+                            "_vencida"
+                        ] = (
+                            fin_supervisor_admin.notna()
+                            & (
+                                fin_supervisor_admin
+                                < ahora_supervisor_admin
+                            )
+                            & (
+                                estado_supervisor_admin[
+                                    "REAL ACTUAL (%)"
+                                ] < 100
+                            )
+                        )
+
+                        # Atrasada:
+                        # desviación mayor a 10 pp o actividad vencida.
+                        estado_supervisor_admin[
+                            "_atrasada"
+                        ] = (
+                            (
+                                estado_supervisor_admin[
+                                    "DESVIACIÓN (pp)"
+                                ] < -10
+                            )
+                            | estado_supervisor_admin[
+                                "_vencida"
+                            ]
+                        )
+
+                        # -----------------------------------------
+                        # Consolidado por Supervisor + Área
+                        # -----------------------------------------
+
+                        resumen_supervisores_admin = []
+
+                        grupos_supervisor_admin = (
+                            estado_supervisor_admin
+                            .groupby(
+                                [
+                                    "Área",
+                                    "supervisor"
+                                ],
+                                dropna=False
+                            )
+                        )
+
+                        for (
+                            area_sup,
+                            supervisor_sup
+                        ), grupo_sup in grupos_supervisor_admin:
+
+                            total_actividades_sup = len(
+                                grupo_sup
+                            )
+
+                            plan_promedio_sup = float(
+                                grupo_sup[
+                                    "PLAN ACTUAL (%)"
+                                ].mean()
+                            )
+
+                            real_promedio_sup = float(
+                                grupo_sup[
+                                    "REAL ACTUAL (%)"
+                                ].mean()
+                            )
+
+                            desviacion_sup = (
+                                real_promedio_sup
+                                - plan_promedio_sup
+                            )
+
+                            atrasadas_sup = int(
+                                grupo_sup[
+                                    "_atrasada"
+                                ].sum()
+                            )
+
+                            vencidas_sup = int(
+                                grupo_sup[
+                                    "_vencida"
+                                ].sum()
+                            )
+
+                            sin_reporte_sup = int(
+                                grupo_sup[
+                                    "_sin_reporte"
+                                ].sum()
+                            )
+
+                            exigibles_sup = int(
+                                grupo_sup[
+                                    "_exigible"
+                                ].sum()
+                            )
+
+                            reportadas_sup = max(
+                                0,
+                                exigibles_sup
+                                - sin_reporte_sup
+                            )
+
+                            cumplimiento_reporte_sup = (
+                                (
+                                    reportadas_sup
+                                    / exigibles_sup
+                                    * 100
+                                )
+                                if exigibles_sup > 0
+                                else 100.0
+                            )
+
+                            fechas_validas_sup = (
+                                grupo_sup[
+                                    "_fecha_registro_lima"
+                                ]
+                                .dropna()
+                            )
+
+                            if fechas_validas_sup.empty:
+                                ultimo_reporte_sup = (
+                                    "Sin reporte"
+                                )
+                            else:
+                                ultimo_reporte_sup = (
+                                    fechas_validas_sup
+                                    .max()
+                                    .strftime(
+                                        "%d/%m %H:%M"
+                                    )
+                                )
+
+                            # ---------------------------------
+                            # Estado gerencial del supervisor
+                            # ---------------------------------
+
+                            if (
+                                vencidas_sup > 0
+                                or desviacion_sup < -20
+                            ):
+                                estado_gestion_sup = (
+                                    "🔴 INTERVENCIÓN"
+                                )
+
+                            elif (
+                                atrasadas_sup > 0
+                                or desviacion_sup < -10
+                            ):
+                                estado_gestion_sup = (
+                                    "🟠 RECUPERACIÓN"
+                                )
+
+                            elif (
+                                sin_reporte_sup > 0
+                                or desviacion_sup < -5
+                            ):
+                                estado_gestion_sup = (
+                                    "🟡 SEGUIMIENTO"
+                                )
+
+                            else:
+                                estado_gestion_sup = (
+                                    "🟢 EN LÍNEA"
+                                )
+
+                            resumen_supervisores_admin.append({
+                                "Estado":
+                                    estado_gestion_sup,
+                                "Área":
+                                    area_sup,
+                                "Supervisor":
+                                    supervisor_sup,
+                                "Actividades":
+                                    total_actividades_sup,
+                                "Plan (%)":
+                                    round(
+                                        plan_promedio_sup,
+                                        1
+                                    ),
+                                "Real (%)":
+                                    round(
+                                        real_promedio_sup,
+                                        1
+                                    ),
+                                "Desv. (pp)":
+                                    round(
+                                        desviacion_sup,
+                                        1
+                                    ),
+                                "Atrasadas":
+                                    atrasadas_sup,
+                                "Vencidas":
+                                    vencidas_sup,
+                                "Sin reporte":
+                                    sin_reporte_sup,
+                                "Reporte (%)":
+                                    round(
+                                        cumplimiento_reporte_sup,
+                                        0
+                                    ),
+                                "Último reporte":
+                                    ultimo_reporte_sup
+                            })
+
+                        df_supervisores_admin = (
+                            pd.DataFrame(
+                                resumen_supervisores_admin
+                            )
+                        )
+
+                        if df_supervisores_admin.empty:
+
+                            st.info(
+                                "No existe información suficiente "
+                                "para evaluar supervisores."
+                            )
+
+                        else:
+
+                            # ---------------------------------
+                            # KPIs gerenciales compactos
+                            # ---------------------------------
+
+                            total_supervisores_admin = (
+                                len(
+                                    df_supervisores_admin
+                                )
+                            )
+
+                            supervisores_alerta_admin = int(
+                                (
+                                    df_supervisores_admin[
+                                        "Estado"
+                                    ]
+                                    != "🟢 EN LÍNEA"
+                                ).sum()
+                            )
+
+                            total_atrasadas_admin = int(
+                                df_supervisores_admin[
+                                    "Atrasadas"
+                                ].sum()
+                            )
+
+                            total_sin_reporte_admin = int(
+                                df_supervisores_admin[
+                                    "Sin reporte"
+                                ].sum()
+                            )
+
+                            sup1, sup2, sup3, sup4 = (
+                                st.columns(4)
+                            )
+
+                            with sup1:
+                                st.metric(
+                                    "Supervisores",
+                                    total_supervisores_admin
+                                )
+
+                            with sup2:
+                                st.metric(
+                                    "Con alerta",
+                                    supervisores_alerta_admin
+                                )
+
+                            with sup3:
+                                st.metric(
+                                    "Actividades atrasadas",
+                                    total_atrasadas_admin
+                                )
+
+                            with sup4:
+                                st.metric(
+                                    "Actividades sin reporte",
+                                    total_sin_reporte_admin
+                                )
+
+                            # ---------------------------------
+                            # Orden gerencial:
+                            # rojos -> naranjas -> amarillos -> verdes
+                            # ---------------------------------
+
+                            prioridad_estado_supervisor = {
+                                "🔴 INTERVENCIÓN": 1,
+                                "🟠 RECUPERACIÓN": 2,
+                                "🟡 SEGUIMIENTO": 3,
+                                "🟢 EN LÍNEA": 4
+                            }
+
+                            df_supervisores_admin[
+                                "_orden"
+                            ] = (
+                                df_supervisores_admin[
+                                    "Estado"
+                                ]
+                                .map(
+                                    prioridad_estado_supervisor
+                                )
+                                .fillna(9)
+                            )
+
+                            df_supervisores_admin = (
+                                df_supervisores_admin
+                                .sort_values(
+                                    [
+                                        "_orden",
+                                        "Desv. (pp)",
+                                        "Supervisor"
+                                    ],
+                                    ascending=[
+                                        True,
+                                        True,
+                                        True
+                                    ]
+                                )
+                                .drop(
+                                    columns=["_orden"]
+                                )
+                            )
+
+                            st.dataframe(
+                                df_supervisores_admin,
+                                use_container_width=True,
+                                hide_index=True,
+                                height=min(
+                                    460,
+                                    42
+                                    + (
+                                        len(
+                                            df_supervisores_admin
+                                        )
+                                        * 35
+                                    )
+                                ),
+                                column_config={
+                                    "Plan (%)":
+                                        st.column_config.NumberColumn(
+                                            "Plan (%)",
+                                            format="%.1f%%"
+                                        ),
+                                    "Real (%)":
+                                        st.column_config.NumberColumn(
+                                            "Real (%)",
+                                            format="%.1f%%"
+                                        ),
+                                    "Desv. (pp)":
+                                        st.column_config.NumberColumn(
+                                            "Desv. (pp)",
+                                            format="%.1f"
+                                        ),
+                                    "Reporte (%)":
+                                        st.column_config.ProgressColumn(
+                                            "Reporte (%)",
+                                            min_value=0,
+                                            max_value=100,
+                                            format="%.0f%%"
+                                        )
                                 }
                             )
-                        )
 
-                        st.dataframe(
-                            tabla_pendientes_admin,
-                            use_container_width=True,
-                            hide_index=True,
-                            height=520
-                        )
+                            st.caption(
+                                "Criterio: 'Sin reporte' solo considera "
+                                "actividades cuyo inicio plan ya ocurrió y "
+                                "que aún no tienen ningún avance registrado. "
+                                "'Atrasadas' considera desviación menor a "
+                                "-10 pp o actividades vencidas sin culminar."
+                            )
 
 
 
