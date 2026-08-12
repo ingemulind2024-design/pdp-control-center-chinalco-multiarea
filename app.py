@@ -660,6 +660,31 @@ def build_s_curve(
 
     cortes.append(fin_programa)
 
+    # =====================================================
+    # PUNTO EN VIVO
+    # =====================================================
+    # Los cortes oficiales se mantienen en:
+    # 00:00 / 07:00 / 14:00 / 19:00.
+    #
+    # Además agregamos la hora actual mientras la parada
+    # está en ejecución. Esto permite que la curva REAL
+    # muestre el avance acumulado registrado hasta este
+    # momento, aunque el último reporte haya ocurrido
+    # después del último corte oficial.
+    ahora_lima = (
+        pd.Timestamp.now(
+            tz="America/Lima"
+        )
+        .tz_localize(None)
+    )
+
+    if (
+        inicio_programa
+        < ahora_lima
+        < fin_programa
+    ):
+        cortes.append(ahora_lima)
+
     cortes = sorted(
         pd.Series(cortes)
         .drop_duplicates()
