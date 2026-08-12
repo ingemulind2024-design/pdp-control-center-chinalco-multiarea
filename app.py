@@ -774,28 +774,25 @@ def build_s_curve(
         valid["id"].tolist()
     )
 
-    ultima_fecha_real = (
-        prog["fecha_registro"].max()
-        if not prog.empty
-        else None
-    )
-
     for corte in cortes:
 
         if prog.empty:
 
             real_values.append(
                 0.0
-                if corte == inicio_programa
+                if corte <= ahora_lima
                 else None
             )
 
             continue
 
-        if (
-            ultima_fecha_real is not None
-            and corte > ultima_fecha_real
-        ):
+        # IMPORTANTE:
+        # La curva REAL debe mantener el último avance conocido
+        # hasta la hora actual. No debe desaparecer solo porque
+        # el último reporte ocurrió antes que el punto EN VIVO.
+        #
+        # Únicamente ocultamos puntos que realmente están en el futuro.
+        if corte > ahora_lima:
             real_values.append(None)
             continue
 
