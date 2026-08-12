@@ -497,7 +497,7 @@ def compute_kpis(
         errors="coerce"
     )
 
-    ahora = pd.Timestamp.now()
+    ahora = pd.Timestamp.now(tz="America/Lima").tz_localize(None)
 
     avances_plan_actual = []
 
@@ -721,11 +721,15 @@ def build_s_curve(
 
     if not prog.empty:
 
-        prog["fecha_registro"] = pd.to_datetime(
-            prog["fecha_registro"],
-            errors="coerce",
-            utc=True
-        ).dt.tz_localize(None)
+        prog["fecha_registro"] = (
+            pd.to_datetime(
+                prog["fecha_registro"],
+                errors="coerce",
+                utc=True
+            )
+            .dt.tz_convert("America/Lima")
+            .dt.tz_localize(None)
+        )
 
         prog["avance"] = pd.to_numeric(
             prog["avance"],
@@ -1529,7 +1533,7 @@ def calcular_semaforo_pdf(
     if estado.empty:
         return estado
 
-    ahora = pd.Timestamp.now()
+    ahora = pd.Timestamp.now(tz="America/Lima").tz_localize(None)
 
     inicio = pd.to_datetime(
         estado.get("inicio_plan"),
@@ -3684,7 +3688,7 @@ if rol == "admin":
                         )
                     )
 
-                    ahora_sem_admin = pd.Timestamp.now()
+                    ahora_sem_admin = pd.Timestamp.now(tz="America/Lima").tz_localize(None)
 
                     inicio_sem_admin = pd.to_datetime(
                         estado_semaforo_admin.get(
@@ -4418,7 +4422,7 @@ if rol == "admin":
                     else:
 
                         ahora_supervisor_admin = (
-                            pd.Timestamp.now()
+                            pd.Timestamp.now(tz="America/Lima").tz_localize(None)
                         )
 
                         inicio_supervisor_admin = (
@@ -5196,7 +5200,7 @@ if rol == "admin":
                     # SEMÁFOROS Y ALERTAS DE ATRASO
                     # -----------------------------------------
 
-                    ahora_admin = pd.Timestamp.now()
+                    ahora_admin = pd.Timestamp.now(tz="America/Lima").tz_localize(None)
 
                     inicio_admin = pd.to_datetime(
                         detalle_operativo_admin.get(
