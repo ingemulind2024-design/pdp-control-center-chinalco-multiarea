@@ -335,43 +335,10 @@ def latest_progress(progress: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def excluir_canceladas(activities: pd.DataFrame) -> pd.DataFrame:
-    """
-    Excluye del cálculo operativo las actividades canceladas por el cliente,
-    pero NO las elimina de la base ni borra sus avances/evidencias.
-    """
-    if activities is None or activities.empty:
-        return activities
-
-    if "estado_operativo" not in activities.columns:
-        return activities
-
-    estado = (
-        activities["estado_operativo"]
-        .fillna("ACTIVA")
-        .astype(str)
-        .str.upper()
-        .str.strip()
-    )
-
-    return activities[
-        ~estado.isin(
-            [
-                "CANCELADA",
-                "CANCELADA POR CLIENTE"
-            ]
-        )
-    ].copy()
-
-
 def build_activity_status(
     activities: pd.DataFrame,
     progress: pd.DataFrame
 ) -> pd.DataFrame:
-
-    activities = excluir_canceladas(
-        activities
-    )
 
     if activities.empty:
         return activities.copy()
@@ -611,10 +578,6 @@ def build_s_curve(
     activities: pd.DataFrame,
     progress: pd.DataFrame
 ) -> pd.DataFrame:
-
-    activities = excluir_canceladas(
-        activities
-    )
 
     if activities.empty:
         return pd.DataFrame(
@@ -8278,7 +8241,7 @@ else:
                 .select(
                     "id,codigo_actividad,descripcion,supervisor,"
                     "especialidad,grupo,peso,inicio_plan,fin_plan,"
-                    "seccion,personal,duracion_h,hh_plan,critica,activo,estado_operativo,motivo_cancelacion,fecha_cancelacion,cancelado_por"
+                    "seccion,personal,duracion_h,hh_plan,critica,activo"
                 )
                 .eq(
                     "ot_id",
@@ -8451,135 +8414,6 @@ else:
                     f"Último avance registrado de esta actividad: "
                     f"{ultimo_avance_guardado}%"
                 )
-
-                estado_operativo_actual = str(
-                    actividad.get(
-                        "estado_operativo"
-                    )
-                    or "ACTIVA"
-                ).upper().strip()
-
-                if estado_operativo_actual in {
-                    "CANCELADA",
-                    "CANCELADA POR CLIENTE"
-                }:
-
-                    st.warning(
-                        "Actividad CANCELADA POR CLIENTE."
-                    )
-
-                    st.write(
-                        "**Motivo:** "
-                        f"{actividad.get('motivo_cancelacion') or 'Sin detalle'}"
-                    )
-
-                    st.write(
-                        "**Registrado por:** "
-                        f"{actividad.get('cancelado_por') or '-'}"
-                    )
-
-                    st.stop()
-
-                cancelar_por_cliente = st.checkbox(
-                    "Cancelar actividad por indicación del cliente",
-                    key=(
-                        f"cancelar_cliente_"
-                        f"{actividad['id']}"
-                    )
-                )
-
-                if cancelar_por_cliente:
-
-                    st.warning(
-                        "La actividad quedará fuera del cálculo operativo "
-                        "PLAN/REAL, pero conservará todos sus registros anteriores."
-                    )
-
-                    motivo_cancelacion = st.text_area(
-                        "Motivo / indicación del cliente *",
-                        key=(
-                            f"motivo_cancelacion_"
-                            f"{actividad['id']}"
-                        ),
-                        placeholder=(
-                            "Ejemplo: Cliente solicita no ejecutar "
-                            "por cambio de alcance."
-                        )
-                    )
-
-                    confirmar_cancelacion = st.checkbox(
-                        "Confirmo que la cancelación fue indicada por el cliente",
-                        key=(
-                            f"confirmar_cancelacion_"
-                            f"{actividad['id']}"
-                        )
-                    )
-
-                    registrar_cancelacion = st.button(
-                        "Registrar cancelación",
-                        type="primary",
-                        use_container_width=True,
-                        key=(
-                            f"btn_cancelacion_"
-                            f"{actividad['id']}"
-                        )
-                    )
-
-                    if registrar_cancelacion:
-
-                        if not motivo_cancelacion.strip():
-
-                            st.error(
-                                "Debe registrar el motivo de la cancelación."
-                            )
-
-                        elif not confirmar_cancelacion:
-
-                            st.error(
-                                "Debe confirmar la indicación del cliente."
-                            )
-
-                        else:
-
-                            try:
-
-                                (
-                                    supabase
-                                    .table("actividades")
-                                    .update(
-                                        {
-                                            "estado_operativo":
-                                                "CANCELADA POR CLIENTE",
-                                            "motivo_cancelacion":
-                                                motivo_cancelacion.strip(),
-                                            "fecha_cancelacion":
-                                                datetime.now().isoformat(),
-                                            "cancelado_por":
-                                                usuario["username"]
-                                        }
-                                    )
-                                    .eq(
-                                        "id",
-                                        actividad["id"]
-                                    )
-                                    .execute()
-                                )
-
-                                st.success(
-                                    "Actividad registrada como "
-                                    "CANCELADA POR CLIENTE."
-                                )
-
-                                st.rerun()
-
-                            except Exception as exc:
-
-                                st.error(
-                                    "No fue posible registrar la cancelación: "
-                                    f"{exc}"
-                                )
-
-                    st.stop()
 
                 avance = st.number_input(
                     "Porcentaje de avance de la actividad (%)",
