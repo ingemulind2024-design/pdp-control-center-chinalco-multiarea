@@ -335,10 +335,43 @@ def latest_progress(progress: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def excluir_canceladas(activities: pd.DataFrame) -> pd.DataFrame:
+    """
+    Excluye del cálculo operativo las actividades canceladas por el cliente,
+    pero NO las elimina de la base ni borra sus avances/evidencias.
+    """
+    if activities is None or activities.empty:
+        return activities
+
+    if "estado_operativo" not in activities.columns:
+        return activities
+
+    estado = (
+        activities["estado_operativo"]
+        .fillna("ACTIVA")
+        .astype(str)
+        .str.upper()
+        .str.strip()
+    )
+
+    return activities[
+        ~estado.isin(
+            [
+                "CANCELADA",
+                "CANCELADA POR CLIENTE"
+            ]
+        )
+    ].copy()
+
+
 def build_activity_status(
     activities: pd.DataFrame,
     progress: pd.DataFrame
 ) -> pd.DataFrame:
+
+    activities = excluir_canceladas(
+        activities
+    )
 
     if activities.empty:
         return activities.copy()
@@ -578,6 +611,10 @@ def build_s_curve(
     activities: pd.DataFrame,
     progress: pd.DataFrame
 ) -> pd.DataFrame:
+
+    activities = excluir_canceladas(
+        activities
+    )
 
     if activities.empty:
         return pd.DataFrame(
@@ -8241,7 +8278,7 @@ else:
                 .select(
                     "id,codigo_actividad,descripcion,supervisor,"
                     "especialidad,grupo,peso,inicio_plan,fin_plan,"
-                    "seccion,personal,duracion_h,hh_plan,critica,activo"
+                    "seccion,personal,duracion_h,hh_plan,critica,activo,estado_operativo,motivo_cancelacion,fecha_cancelacion,cancelado_por"
                 )
                 .eq(
                     "ot_id",
@@ -8415,6 +8452,135 @@ else:
                     f"{ultimo_avance_guardado}%"
                 )
 
+                estado_operativo_actual = str(
+                    actividad.get(
+                        "estado_operativo"
+                    )
+                    or "ACTIVA"
+                ).upper().strip()
+
+                if estado_operativo_actual in {
+                    "CANCELADA",
+                    "CANCELADA POR CLIENTE"
+                }:
+
+                    st.warning(
+                        "Actividad CANCELADA POR CLIENTE."
+                    )
+
+                    st.write(
+                        "**Motivo:** "
+                        f"{actividad.get('motivo_cancelacion') or 'Sin detalle'}"
+                    )
+
+                    st.write(
+                        "**Registrado por:** "
+                        f"{actividad.get('cancelado_por') or '-'}"
+                    )
+
+                    st.stop()
+
+                cancelar_por_cliente = st.checkbox(
+                    "Cancelar actividad por indicación del cliente",
+                    key=(
+                        f"cancelar_cliente_"
+                        f"{actividad['id']}"
+                    )
+                )
+
+                if cancelar_por_cliente:
+
+                    st.warning(
+                        "La actividad quedará fuera del cálculo operativo "
+                        "PLAN/REAL, pero conservará todos sus registros anteriores."
+                    )
+
+                    motivo_cancelacion = st.text_area(
+                        "Motivo / indicación del cliente *",
+                        key=(
+                            f"motivo_cancelacion_"
+                            f"{actividad['id']}"
+                        ),
+                        placeholder=(
+                            "Ejemplo: Cliente solicita no ejecutar "
+                            "por cambio de alcance."
+                        )
+                    )
+
+                    confirmar_cancelacion = st.checkbox(
+                        "Confirmo que la cancelación fue indicada por el cliente",
+                        key=(
+                            f"confirmar_cancelacion_"
+                            f"{actividad['id']}"
+                        )
+                    )
+
+                    registrar_cancelacion = st.button(
+                        "Registrar cancelación",
+                        type="primary",
+                        use_container_width=True,
+                        key=(
+                            f"btn_cancelacion_"
+                            f"{actividad['id']}"
+                        )
+                    )
+
+                    if registrar_cancelacion:
+
+                        if not motivo_cancelacion.strip():
+
+                            st.error(
+                                "Debe registrar el motivo de la cancelación."
+                            )
+
+                        elif not confirmar_cancelacion:
+
+                            st.error(
+                                "Debe confirmar la indicación del cliente."
+                            )
+
+                        else:
+
+                            try:
+
+                                (
+                                    supabase
+                                    .table("actividades")
+                                    .update(
+                                        {
+                                            "estado_operativo":
+                                                "CANCELADA POR CLIENTE",
+                                            "motivo_cancelacion":
+                                                motivo_cancelacion.strip(),
+                                            "fecha_cancelacion":
+                                                datetime.now().isoformat(),
+                                            "cancelado_por":
+                                                usuario["username"]
+                                        }
+                                    )
+                                    .eq(
+                                        "id",
+                                        actividad["id"]
+                                    )
+                                    .execute()
+                                )
+
+                                st.success(
+                                    "Actividad registrada como "
+                                    "CANCELADA POR CLIENTE."
+                                )
+
+                                st.rerun()
+
+                            except Exception as exc:
+
+                                st.error(
+                                    "No fue posible registrar la cancelación: "
+                                    f"{exc}"
+                                )
+
+                    st.stop()
+
                 avance = st.number_input(
                     "Porcentaje de avance de la actividad (%)",
                     min_value=0,
@@ -8584,19 +8750,138 @@ else:
         else:
 
             # ================================================
-            # SELECCIÓN DE OT
+            # FILTRO SUPERVISOR + SELECCIÓN DE OT
+            # MISMA LÓGICA DEL APP ANTAPACCAY
             # ================================================
 
-            mapa_detalle_ots = {
-                f"{ot['ot']} - {ot.get('equipo') or 'Sin equipo'}": ot
+            ids_ots_detalle_area = [
+                ot["id"]
                 for ot in ots_area
+            ]
+
+            actividades_area_detalle = []
+
+            if ids_ots_detalle_area:
+                actividades_area_detalle = (
+                    supabase
+                    .table("actividades")
+                    .select(
+                        "id,ot_id,supervisor,activo"
+                    )
+                    .in_(
+                        "ot_id",
+                        ids_ots_detalle_area
+                    )
+                    .eq("activo", True)
+                    .execute()
+                ).data or []
+
+            supervisores_detalle = sorted(
+                {
+                    str(
+                        actividad_det.get(
+                            "supervisor",
+                            ""
+                        )
+                    ).strip()
+                    for actividad_det
+                    in actividades_area_detalle
+                    if str(
+                        actividad_det.get(
+                            "supervisor",
+                            ""
+                        )
+                    ).strip()
+                }
+            )
+
+            col_sup_det, col_ot_det = st.columns(2)
+
+            with col_sup_det:
+
+                supervisor_detalle = st.selectbox(
+                    "Seleccione supervisor",
+                    ["TODOS"] + supervisores_detalle,
+                    key=(
+                        f"detalle_supervisor_"
+                        f"{usuario.get('area_id')}"
+                    )
+                )
+
+            if supervisor_detalle == "TODOS":
+
+                ots_detalle_filtradas = ots_area
+
+            else:
+
+                ids_ots_supervisor_detalle = {
+                    actividad_det["ot_id"]
+                    for actividad_det
+                    in actividades_area_detalle
+                    if str(
+                        actividad_det.get(
+                            "supervisor",
+                            ""
+                        )
+                    ).strip()
+                    == supervisor_detalle
+                }
+
+                ots_detalle_filtradas = [
+                    ot
+                    for ot in ots_area
+                    if ot["id"]
+                    in ids_ots_supervisor_detalle
+                ]
+
+            mapa_detalle_ots = {
+                (
+                    f"{ot['ot']} - "
+                    f"{ot.get('equipo') or 'Sin equipo'}"
+                ): ot
+                for ot in ots_detalle_filtradas
             }
 
-            ot_detalle_texto = st.selectbox(
-                "Seleccione una OT",
-                list(mapa_detalle_ots.keys()),
-                key="detalle_ot_selector"
-            )
+            with col_ot_det:
+
+                ot_detalle_texto = st.selectbox(
+                    "Escriba o seleccione la OT *",
+                    list(mapa_detalle_ots.keys()),
+                    index=None,
+                    placeholder="Buscar OT...",
+                    key=(
+                        f"detalle_ot_selector_"
+                        f"{usuario.get('area_id')}_"
+                        f"{supervisor_detalle}"
+                    )
+                )
+
+            if supervisor_detalle == "TODOS":
+                st.caption(
+                    f"Mostrando todas las OTs disponibles: "
+                    f"{len(ots_detalle_filtradas)} OT(s)."
+                )
+            else:
+                st.caption(
+                    f"Mostrando OTs de "
+                    f"{supervisor_detalle}: "
+                    f"{len(ots_detalle_filtradas)} OT(s)."
+                )
+
+            if not mapa_detalle_ots:
+
+                st.warning(
+                    "No existen OTs activas para "
+                    "el supervisor seleccionado."
+                )
+                st.stop()
+
+            if not ot_detalle_texto:
+
+                st.info(
+                    "Seleccione una OT para visualizar su detalle."
+                )
+                st.stop()
 
             ot_detalle = mapa_detalle_ots[
                 ot_detalle_texto
@@ -8657,6 +8942,20 @@ else:
                 resultado_actividades_detalle.data
                 or []
             )
+
+            if supervisor_detalle != "TODOS":
+                actividades_detalle = [
+                    actividad_det
+                    for actividad_det
+                    in actividades_detalle
+                    if str(
+                        actividad_det.get(
+                            "supervisor",
+                            ""
+                        )
+                    ).strip()
+                    == supervisor_detalle
+                ]
 
             if not actividades_detalle:
 
