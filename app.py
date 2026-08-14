@@ -8091,23 +8091,144 @@ else:
         else:
 
             # ============================================
-            # SELECCIÓN DE OT
+            # FILTRO SUPERVISOR + SELECCIÓN DE OT
+            # MISMA LÓGICA DEL APP ANTAPACCAY
             # ============================================
 
-            mapa_ots = {
-                f"{ot['ot']} - {ot.get('equipo') or 'Sin equipo'}": ot
+            ids_ots_area_registro = [
+                ot["id"]
                 for ot in ots_area
+            ]
+
+            actividades_area_registro = []
+
+            if ids_ots_area_registro:
+                actividades_area_registro = (
+                    supabase
+                    .table("actividades")
+                    .select(
+                        "id,ot_id,supervisor,activo"
+                    )
+                    .in_(
+                        "ot_id",
+                        ids_ots_area_registro
+                    )
+                    .eq("activo", True)
+                    .execute()
+                ).data or []
+
+            supervisores_area = sorted(
+                {
+                    str(
+                        actividad_sup.get(
+                            "supervisor",
+                            ""
+                        )
+                    ).strip()
+                    for actividad_sup
+                    in actividades_area_registro
+                    if str(
+                        actividad_sup.get(
+                            "supervisor",
+                            ""
+                        )
+                    ).strip()
+                }
+            )
+
+            col_supervisor, col_ot = st.columns(2)
+
+            with col_supervisor:
+
+                supervisor_seleccionado = st.selectbox(
+                    "Seleccione supervisor",
+                    ["TODOS"] + supervisores_area,
+                    key=(
+                        f"supervisor_registro_"
+                        f"{usuario.get('area_id')}"
+                    )
+                )
+
+            # OTs permitidas según supervisor
+            if supervisor_seleccionado == "TODOS":
+
+                ots_filtradas_registro = ots_area
+
+            else:
+
+                ids_ot_supervisor = {
+                    actividad_sup["ot_id"]
+                    for actividad_sup
+                    in actividades_area_registro
+                    if str(
+                        actividad_sup.get(
+                            "supervisor",
+                            ""
+                        )
+                    ).strip()
+                    == supervisor_seleccionado
+                }
+
+                ots_filtradas_registro = [
+                    ot
+                    for ot in ots_area
+                    if ot["id"] in ids_ot_supervisor
+                ]
+
+            mapa_ots = {
+                (
+                    f"{ot['ot']} - "
+                    f"{ot.get('equipo') or 'Sin equipo'}"
+                ): ot
+                for ot in ots_filtradas_registro
             }
 
-            ot_texto = st.selectbox(
-                "Seleccione una OT",
-                list(mapa_ots.keys())
-            )
+            with col_ot:
+
+                ot_texto = st.selectbox(
+                    "Escriba o seleccione la OT *",
+                    list(mapa_ots.keys()),
+                    index=None,
+                    placeholder="Buscar OT...",
+                    key=(
+                        f"ot_registro_"
+                        f"{usuario.get('area_id')}_"
+                        f"{supervisor_seleccionado}"
+                    )
+                )
+
+            if supervisor_seleccionado == "TODOS":
+                st.caption(
+                    f"Mostrando todas las OTs disponibles: "
+                    f"{len(ots_filtradas_registro)} OT(s)."
+                )
+            else:
+                st.caption(
+                    f"Mostrando OTs de "
+                    f"{supervisor_seleccionado}: "
+                    f"{len(ots_filtradas_registro)} OT(s)."
+                )
+
+            if not mapa_ots:
+
+                st.warning(
+                    "No existen OTs activas para "
+                    "el supervisor seleccionado."
+                )
+                st.stop()
+
+            if not ot_texto:
+
+                st.info(
+                    "Seleccione una OT para continuar."
+                )
+                st.stop()
 
             ot_seleccionada = mapa_ots[ot_texto]
 
             st.info(
-                f"Equipo: {ot_seleccionada.get('equipo') or 'Sin equipo'}"
+                f"Equipo: "
+                f"{ot_seleccionada.get('equipo') or 'Sin equipo'}"
             )
 
             # ============================================
@@ -8122,13 +8243,35 @@ else:
                     "especialidad,grupo,peso,inicio_plan,fin_plan,"
                     "seccion,personal,duracion_h,hh_plan,critica,activo"
                 )
-                .eq("ot_id", ot_seleccionada["id"])
+                .eq(
+                    "ot_id",
+                    ot_seleccionada["id"]
+                )
                 .eq("activo", True)
                 .order("codigo_actividad")
                 .execute()
             )
 
-            actividades_ot = actividades_resultado.data or []
+            actividades_ot = (
+                actividades_resultado.data
+                or []
+            )
+
+            # Si se seleccionó un supervisor específico,
+            # mostrar únicamente sus actividades dentro de la OT.
+            if supervisor_seleccionado != "TODOS":
+
+                actividades_ot = [
+                    actividad_ot
+                    for actividad_ot in actividades_ot
+                    if str(
+                        actividad_ot.get(
+                            "supervisor",
+                            ""
+                        )
+                    ).strip()
+                    == supervisor_seleccionado
+                ]
 
             if not actividades_ot:
 
