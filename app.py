@@ -60,7 +60,7 @@ def conectar_supabase_admin():
     return create_client(url, key)
 
 
-supabase = conectar_supabase()
+supabase = conectar_supabase_admin()
 supabase_admin = conectar_supabase_admin()
 
 
