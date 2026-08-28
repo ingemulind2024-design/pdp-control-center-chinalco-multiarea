@@ -252,7 +252,7 @@ def subir_evidencia(
     )
 
     (
-        supabase
+        supabase_admin
         .storage
         .from_(BUCKET_EVIDENCIAS)
         .upload(
@@ -265,15 +265,11 @@ def subir_evidencia(
         )
     )
 
-    url_publica = (
-        supabase
-        .storage
-        .from_(BUCKET_EVIDENCIAS)
-        .get_public_url(ruta)
-    )
-
+    # IMPORTANTE:
+    # Guardamos únicamente el PATH permanente del archivo.
+    # La URL para visualizarlo se generará temporalmente
+    # mediante una Signed URL cuando el usuario abra Evidencias.
     return {
-        "url": url_publica,
         "path": ruta,
         "nombre_original": archivo.name,
         "tipo": tipo_evidencia,
@@ -281,6 +277,119 @@ def subir_evidencia(
         "tamano_comprimido": tamano_comprimido,
         "ahorro_pct": round(ahorro, 1)
     }
+
+
+def extraer_path_evidencia(evidencia):
+    """
+    Obtiene el path permanente de una evidencia.
+
+    Compatible con:
+    1) registros nuevos que guardan {"path": "..."}
+    2) registros antiguos que guardan {"url": "...", "path": "..."}
+    3) registros muy antiguos que solo guardaron una URL pública.
+    """
+
+    if not evidencia:
+        return ""
+
+    if isinstance(evidencia, dict):
+
+        path = str(
+            evidencia.get("path")
+            or ""
+        ).strip()
+
+        if path:
+            return path
+
+        url = str(
+            evidencia.get("url")
+            or ""
+        ).strip()
+
+    elif isinstance(evidencia, str):
+
+        url = evidencia.strip()
+
+        # Si por alguna razón se almacenó directamente un path.
+        if (
+            url
+            and "://" not in url
+            and not url.startswith("/")
+        ):
+            return url
+
+    else:
+        return ""
+
+    if not url:
+        return ""
+
+    marcadores = [
+        f"/storage/v1/object/public/{BUCKET_EVIDENCIAS}/",
+        f"/storage/v1/object/sign/{BUCKET_EVIDENCIAS}/",
+        f"/storage/v1/object/{BUCKET_EVIDENCIAS}/"
+    ]
+
+    for marcador in marcadores:
+
+        if marcador in url:
+
+            path = url.split(
+                marcador,
+                1
+            )[1]
+
+            # Retirar parámetros de una URL firmada previa.
+            path = path.split("?", 1)[0]
+
+            return path.strip("/")
+
+    return ""
+
+
+def crear_url_firmada_evidencia(
+    evidencia,
+    duracion_segundos=3600
+):
+    """
+    Genera una URL temporal para visualizar una evidencia privada.
+    El archivo NO expira ni se elimina.
+    Solo expira este permiso temporal de lectura.
+    """
+
+    path = extraer_path_evidencia(
+        evidencia
+    )
+
+    if not path:
+        return ""
+
+    try:
+
+        respuesta = (
+            supabase_admin
+            .storage
+            .from_(BUCKET_EVIDENCIAS)
+            .create_signed_url(
+                path,
+                duracion_segundos
+            )
+        )
+
+        if isinstance(respuesta, dict):
+
+            return (
+                respuesta.get("signedURL")
+                or respuesta.get("signedUrl")
+                or respuesta.get("signed_url")
+                or ""
+            )
+
+        return str(respuesta or "")
+
+    except Exception:
+        return ""
 
 
 def subir_evidencias(
@@ -9438,16 +9547,11 @@ else:
                                     evidencia,
                                     str
                                 ):
-                                    url_evidencia = evidencia
                                     nombre_evidencia = (
                                         f"Evidencia {indice + 1}"
                                     )
 
                                 else:
-                                    url_evidencia = evidencia.get(
-                                        "url",
-                                        ""
-                                    )
                                     nombre_evidencia = (
                                         evidencia.get(
                                             "nombre_original"
@@ -9455,7 +9559,21 @@ else:
                                         or f"Evidencia {indice + 1}"
                                     )
 
+                                # La fotografía se mantiene almacenada
+                                # permanentemente. Solo la URL de lectura
+                                # es temporal (1 hora).
+                                url_evidencia = (
+                                    crear_url_firmada_evidencia(
+                                        evidencia,
+                                        duracion_segundos=3600
+                                    )
+                                )
+
                                 if not url_evidencia:
+                                    st.warning(
+                                        "No fue posible generar acceso "
+                                        f"temporal a {nombre_evidencia}."
+                                    )
                                     continue
 
                                 with columnas_fotos[
